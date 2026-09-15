@@ -1,5 +1,45 @@
 [
   {
+    "id": "inq_1789493943571_7etvz",
+    "timestamp": "2026-09-15T17:39:03.571Z",
+    "expertDomain": "coding",
+    "language": "en",
+    "prompt": "write a python code to check if a number is prime",
+    "responseSummary": "To determine if a number is prime, we implement an optimized trial division algorithm. By checking divisibility only up to the square root of the number and skipping even numbers after 2, we significantly reduce the number of iterations required.\n\n```python\nimport math\n\ndef is_pr",
+    "modelUsed": "gemini-3.1-flash-lite",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789493924560_1j1rr",
+    "timestamp": "2026-09-15T17:38:44.560Z",
+    "expertDomain": "agriculture",
+    "language": "en",
+    "prompt": "give me details on which crop suites in ajanta village environment to grow to get profits guranttee",
+    "responseSummary": "**Agro-Climatic Profile of Ajanta (Sillod Region)**\n\nAjanta village (located in Sillod taluka, Chhatrapati Sambhajinagar district) features medium-to-deep black basalt soils (*Regur* or Vertisols) with good moisture retention capabilities. The region experiences a semi-arid clima",
+    "modelUsed": "gemini-3.6-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789493901442_mosgh",
+    "timestamp": "2026-09-15T17:38:21.442Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "What is the capital of France?",
+    "responseSummary": "The capital of France is Paris. It serves as the nation's political, economic, and cultural center.",
+    "modelUsed": "gemini-3.6-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789493892660_uomxn",
+    "timestamp": "2026-09-15T17:38:12.660Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "What is 2 + 2?",
+    "responseSummary": "2 + 2 equals 4.",
+    "modelUsed": "gemini-3.6-flash",
+    "isOffline": false
+  },
+  {
     "id": "inq_1789492724339_ge1t8",
     "timestamp": "2026-09-15T17:18:44.339Z",
     "expertDomain": "general",

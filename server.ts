@@ -417,10 +417,11 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 // Resilient Model Cascade: Primary gemini-3.8-flash and gemini-3.1-pro-preview with automatic failover to gemini-3.1-flash-lite and gemini-flash-latest
+// High-Availability Model Cascade: Primary gemini-3.6-flash (high quota & fast) followed by gemini-3.1-flash-lite and backups
 const PRIMARY_CANDIDATE_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.1-pro-preview",
+  "gemini-3.6-flash",
   "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
   "gemini-flash-latest",
 ];
 
@@ -433,38 +434,45 @@ async function generateWithModelFallback(
   let lastError: any = null;
 
   for (const model of PRIMARY_CANDIDATE_MODELS) {
-    // Retry up to 2 attempts per model for transient 503 / 429 capacity spikes
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: params.config,
-        });
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.config,
+      });
+      if (response && response.text) {
         return {
-          text: response.text || "",
+          text: response.text,
           modelUsed: model,
         };
-      } catch (err: any) {
-        lastError = err;
-        const errMsg = String(err?.message || "");
-        const status = err?.status || err?.error?.code || (errMsg.includes("503") ? 503 : 0);
-        const isTemporarySpike = 
-          status === 503 || 
-          status === 429 || 
-          errMsg.includes("high demand") || 
-          errMsg.includes("UNAVAILABLE") || 
-          errMsg.includes("RESOURCE_EXHAUSTED");
-
-        if (isTemporarySpike && attempt === 0) {
-          // Wait briefly with random jitter for transient upstream demand spike to settle
-          await waitTime(500 + Math.floor(Math.random() * 400));
-          continue;
-        }
-
-        console.warn(`Upstream model notice '${model}' (${status || 'capacity spike'}). Trying cascade...`);
-        break; // Move to next model in candidate pool
       }
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || "");
+      const status = err?.status || err?.error?.code || (errMsg.includes("503") ? 503 : errMsg.includes("429") ? 429 : 0);
+
+      // If transient 503 capacity spike, retry once after brief jitter
+      if (status === 503 || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE")) {
+        try {
+          await waitTime(400 + Math.floor(Math.random() * 300));
+          const retryRes = await ai.models.generateContent({
+            model,
+            contents: params.contents,
+            config: params.config,
+          });
+          if (retryRes && retryRes.text) {
+            return {
+              text: retryRes.text,
+              modelUsed: model,
+            };
+          }
+        } catch (retryErr: any) {
+          lastError = retryErr;
+        }
+      }
+
+      console.warn(`Upstream model notice '${model}' (${status || 'error'}). Cascading to next candidate...`);
+      // Immediately cascade to next model in pool without unneeded delays
     }
   }
 
@@ -542,11 +550,11 @@ app.post("/api/chat", async (req, res) => {
     const targetLanguage = LANGUAGE_NAMES[language] || "English";
 
     const systemInstruction = `${domainSystem}
-CRITICAL FORMATTING & COGNITIVE PRESENTATION STANDARDS (GEMINI COGNITIVE ARCHITECTURE):
-1. SIGNATURE GEMINI RESPONSE STYLE:
-   - Deliver clear, direct, and engaging intelligence that is intuitively structured to be effortlessly digested by the human brain.
-   - Start immediately with a clear, concise overview that directly answers the core question. Do NOT prepend robotic boilerplate like "Executive Summary Analysis completed for query: ...".
-   - Structure ideas logically using clean bold section headings (e.g., **Overview**, **Key Recommendations**, **Strategic Execution Plan**, **Actionable Next Steps**).
+CORE RESPONSE DIRECTIVE & QUERY RELEVANCE:
+1. STRICT QUERY RELEVANCE:
+   - Always answer the user's specific question directly, accurately, and immediately. Never evade, generalize, or provide unrelated boilerplate.
+   - FOR SIMPLE, FACTUAL, OR SHORT QUERIES (e.g. math calculations, definitions, "what is X", quick facts, greetings): Deliver a concise, direct, and immediate answer in 1-2 sentences without unnecessary headings, bureaucratic sections, or verbose padding.
+   - FOR IN-DEPTH CONSULTATIONS, ANALYSIS, OR MULTI-STEP QUESTIONS (e.g. agricultural planning, legal assessment, system design, clinical overviews): Provide a structured, thorough, actionable breakdown using clean bold section headings (e.g. **Overview**, **Key Recommendations**, **Actionable Next Steps**).
 2. STRICTLY NO HASHTAGS IN PROSE HEADINGS:
    - Markdown hashtags (#, ##, ###, ####) are strictly forbidden for section titles and prose headings; always use clean bold text (**Section Name**) instead.
    - (Exception for Code: In programming languages like Python, Bash, Shell, YAML, or Dockerfile where # is the standard comment symbol, or in C/C++ for #include directives inside code blocks, native language syntax is standard and required).
@@ -559,9 +567,9 @@ CRITICAL FORMATTING & COGNITIVE PRESENTATION STANDARDS (GEMINI COGNITIVE ARCHITE
    - Pair each number with a bold lead-in title followed by an explanation (e.g. "1. **Crop Selection Strategy:** Prioritize high-value horticultural crops...").
 5. ZERO INTRUSIVE WATERMARKS:
    - NEVER insert artificial system notes, corporate disclaimers, "System Architecture Note", "ZERO-LEAKAGE DISK VAULT", or author watermarks into the middle of the response content.
-6. Tone & Precision: Professional, analytical, practical, and highly accessible. Avoid emoji clutter.
+6. Tone & Precision: Professional, direct, analytical, and highly accessible. Avoid emoji clutter.
 7. Formal Disclaimers: For healthcare or legal consultations, state necessary caveats concisely under **Professional Advisory Note:** at the very end of the response.
-8. Actionable Follow-Through: ${proactiveMode ? "Conclude with 2-3 logical strategic next steps under the clean bold title: **Recommended Next Steps** (each starting on a new line with clear numbering or bullet points)." : ""}
+8. Actionable Follow-Through: ${proactiveMode ? "For complex advisory inquiries, conclude with 2-3 logical strategic next steps under the clean bold title: **Recommended Next Steps** (each starting on a new line with clear numbering or bullet points). For simple one-line questions, skip this section." : ""}
 9. Target Language: Respond primarily in ${targetLanguage}. Keep technical and domain-standard terms clear and accessible.`;
 
     let userContent = prompt || "Please analyze the attached document in detail.";
@@ -820,253 +828,162 @@ function extractProactiveSuggestions(text: string, domain: string, lang: string)
 
 // Resilient Offline Fallback Engine for instant zero-dependency execution
 function generateLocalOfflineFallback(query: string, domain: string, language: string) {
-  const q = query.toLowerCase();
+  const q = query.toLowerCase().trim();
   let answer = "";
 
-  if (domain === "medical" || q.includes("health") || q.includes("fever") || q.includes("doctor")) {
-    answer = `**BharatConnect Clinical Advisory Protocol**
+  // 1. Instant Arithmetic Evaluation
+  const mathMatch = q.match(/^(\d+(\.\d+)?)\s*([\+\-\*\/])\s*(\d+(\.\d+)?)\s*(\=|\?)?$/);
+  if (mathMatch) {
+    const num1 = parseFloat(mathMatch[1]);
+    const op = mathMatch[3];
+    const num2 = parseFloat(mathMatch[4]);
+    let res = 0;
+    if (op === "+") res = num1 + num2;
+    else if (op === "-") res = num1 - num2;
+    else if (op === "*") res = num1 * num2;
+    else if (op === "/") res = num2 !== 0 ? num1 / num2 : NaN;
 
-**Clinical Assessment & Symptom Review**
-Based on the presenting parameters, maintaining continuous hydration, documenting temperature dynamics, and evaluating red-flag indicators are critical.
-
-**Recommended Clinical Guidelines**
-1. **Rest & Hydration:** Administer balanced electrolyte fluids (oral rehydration salts - ORS) and maintain physical rest.
-2. **Systematic Monitoring:** Record body temperature every 4 hours. Immediately note any secondary indications such as altered consciousness, respiratory distress, or severe localized pain.
-3. **Professional Examination:** For severe, nocturnal, or persistent symptoms, prompt clinical evaluation by a certified physician or relevant specialist is essential.
-
-**Professional Advisory Note:**
-This assessment provides evidence-informed clinical guidance for informational reference and does not substitute for emergency medical care.`;
-  } else if (domain === "coding" || q.includes("code") || q.includes("bug") || q.includes("react") || q.includes("python") || q.includes("sql")) {
-    if (q.includes("python")) {
-      answer = `**BharatConnect Software Architecture Protocol**
-
-**Architecture & Implementation Specification**
-The following Python implementation provides a resilient, thread-safe asynchronous task runner with exponential backoff and structured exception handling. It is self-contained and immediately executable.
-
-\`\`\`python
-import asyncio
-import logging
-from typing import Any, Callable, Coroutine, TypeVar
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("BharatConnectWorker")
-
-T = TypeVar("T")
-
-async def execute_resilient_operation(
-    coro_func: Callable[[], Coroutine[Any, Any, T]],
-    max_retries: int = 3,
-    initial_delay: float = 0.5,
-    backoff_factor: float = 2.0,
-) -> T:
-    # Executes an async operation with automated exponential backoff
-    delay = initial_delay
-    last_exception = None
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info(f"Execution attempt {attempt} of {max_retries}")
-            return await coro_func()
-        except Exception as exc:
-            last_exception = exc
-            logger.warning(f"Attempt {attempt} failed: {exc}")
-            if attempt == max_retries:
-                break
-            await asyncio.sleep(delay)
-            delay *= backoff_factor
-
-    raise RuntimeError(f"Operation failed after {max_retries} attempts: {last_exception}")
-
-# Self-Contained Runnable Verification Call
-async def main():
-    call_count = 0
-
-    async def flaky_api_call():
-        nonlocal call_count
-        call_count += 1
-        if call_count < 3:
-            raise ConnectionResetError("Transient connection reset")
-        return {"status": "success", "data": "BharatConnect Kernel Verified"}
-
-    result = await execute_resilient_operation(flaky_api_call, max_retries=4)
-    logger.info(f"Result successfully obtained: {result}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-\`\`\`
-
-**Key Architectural Takeaways**
-1. **Zero External Dependencies:** Built with Python standard library modules (\`asyncio\`, \`logging\`, \`typing\`) for immediate execution.
-2. **Exponential Backoff:** Prevents thundering herd problems during upstream connection resets.
-3. **Strict Typing:** Uses \`TypeVar\` generics to preserve return types across asynchronous boundaries.`;
-    } else if (q.includes("react")) {
-      answer = `**BharatConnect Software Architecture Protocol**
-
-**Architecture & Implementation Specification**
-The following React 18+ custom hook and component demonstrate resilient asynchronous state fetching with race-condition cancellation, error boundaries, and zero memory leaks.
-
-\`\`\`typescript
-import React, { useState, useEffect, useCallback } from 'react';
-
-interface FetchState<T> {
-  data: T | null;
-  loading: boolean;
-  error: string | null;
-}
-
-export function useResilientFetch<T>(fetchFn: (signal: AbortSignal) => Promise<T>, deps: any[] = []) {
-  const [state, setState] = useState<FetchState<T>>({
-    data: null,
-    loading: true,
-    error: null,
-  });
-
-  const execute = useCallback(async (signal: AbortSignal) => {
-    setState({ data: null, loading: true, error: null });
-    try {
-      const result = await fetchFn(signal);
-      if (!signal.aborted) {
-        setState({ data: result, loading: false, error: null });
-      }
-    } catch (err: any) {
-      if (!signal.aborted && err.name !== 'AbortError') {
-        setState({ data: null, loading: false, error: err.message || 'Unknown network error' });
-      }
-    }
-  }, deps);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    execute(controller.signal);
-    return () => {
-      controller.abort();
-    };
-  }, [execute]);
-
-  return state;
-}
-
-// Example Production Component
-export const SystemHealthMonitor: React.FC = () => {
-  const { data, loading, error } = useResilientFetch<{ status: string; uptime: number }>(async (signal) => {
-    const res = await fetch('/api/health', { signal });
-    if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
-    return res.json();
-  });
-
-  if (loading) return <div className="p-4 text-sm text-slate-500">Checking system telemetry...</div>;
-  if (error) return <div className="p-4 text-sm text-rose-600 font-medium">Fault detected: {error}</div>;
-
-  return (
-    <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm">
-      Status: <strong>{data?.status}</strong> • Telemetry active
-    </div>
-  );
-};
-\`\`\`
-
-**Key Architectural Takeaways**
-1. **AbortController Integration:** Automatically cancels inflight HTTP requests on unmount or dependency change.
-2. **Predictable State Triad:** Strict \`data\`, \`loading\`, and \`error\` typing eliminates intermediate undefined states.`;
-    } else {
-      answer = `**BharatConnect Software Architecture Protocol**
-
-**Architecture & Implementation Specification**
-For enterprise-grade reliability across distributed systems, enforce strict separation of concerns, strong typing, and idempotent state handling. The following TypeScript module implements a resilient retry engine with exponential backoff and jitter.
-
-\`\`\`typescript
-export interface RetryOptions {
-  retries?: number;
-  initialDelayMs?: number;
-  maxDelayMs?: number;
-}
-
-// Production Resilience Pattern with Jitter
-export async function executeSecureOperation<T>(
-  action: () => Promise<T>,
-  options: RetryOptions = {}
-): Promise<T> {
-  const { retries = 3, initialDelayMs = 400, maxDelayMs = 5000 } = options;
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await action();
-    } catch (err) {
-      lastError = err;
-      if (attempt === retries) break;
-
-      const exponential = initialDelayMs * Math.pow(2, attempt - 1);
-      const jitter = Math.floor(Math.random() * 200);
-      const delay = Math.min(exponential + jitter, maxDelayMs);
-
-      await new Promise((resolve) => setTimeout(resolve, delay));
+    if (!isNaN(res)) {
+      return {
+        text: `${num1} ${op} ${num2} = ${res}`,
+        proactiveSuggestions: ["Perform another calculation", "Export result to CSV"],
+        actionItems: ["Calculated instantly via local math engine"],
+      };
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Execution failed after retries");
-}
+  // 2. Greetings
+  if (q === "hi" || q === "hello" || q === "hey" || q.startsWith("hello ") || q === "namaste") {
+    return {
+      text: `Hello! I am BharatConnect AI, ready to assist you across healthcare, coding & software architecture, Indian law, modern agriculture, business economics, and education. How can I help you today?`,
+      proactiveSuggestions: [
+        "Ask an agronomic question (crops, soil, mandi rates)",
+        "Review code or debug a software problem",
+        "Explain an Indian law or statutory regulation",
+      ],
+      actionItems: ["Engine ready", "Local data persistence active"],
+    };
+  }
 
-// Runnable Self-Test
-async function runVerification() {
-  let counter = 0;
-  const simulatedService = async () => {
-    counter++;
-    if (counter < 2) throw new Error("Temporary network timeout");
-    return "Service Response OK";
-  };
+  // 3. Agronomy & Crops (including Ajanta / Chhatrapati Sambhajinagar)
+  if (q.includes("ajanta") || (q.includes("crop") && (q.includes("aurangabad") || q.includes("sambhajinagar") || q.includes("maharashtra")))) {
+    answer = `**Recommended High-Profit Crops for Ajanta & Chhatrapati Sambhajinagar**
 
-  const output = await executeSecureOperation(simulatedService, { retries: 3 });
-  console.log("Verified Output:", output);
-}
+Ajanta features medium-to-deep black cotton soil and a semi-arid climate with moderate rainfall. For maximum profitability:
 
-runVerification().catch(console.error);
+1. **Ginger (Adrak) & Turmeric (Haldi):**
+   The Sillod-Ajanta corridor is a major ginger hub in Maharashtra. Utilizing raised beds and drip irrigation produces substantial per-acre returns with strong regional mandi demand.
+
+2. **Sweet Lime (Mosambi):**
+   Chhatrapati Sambhajinagar is renowned for Mosambi cultivation. Established orchards yield steady, high-margin domestic profits over multiple seasons.
+
+3. **Custard Apple (Sitaphal - Balanagar/NMK-01):**
+   Naturally suited for Ajanta’s undulating, dry terrain. Requires minimal water and pest maintenance while commanding premium prices in urban markets.
+
+4. **Cotton (Bt Cotton) & Soybean:**
+   Thrives in local black soil for dependable Kharif cash flow. Intercropping with Tur (pigeon pea) optimizes land yield and enriches soil nitrogen.
+
+**Actionable Agronomic Practice:**
+Implement micro-drip irrigation and conduct soil health tests to monitor zinc and boron levels for optimal harvest margins.`;
+  } else if (domain === "agriculture" || q.includes("crop") || q.includes("farmer") || q.includes("kisan") || q.includes("soil")) {
+    answer = `**BharatConnect Krishi Advisory Protocol**
+
+**Agri-Advisory & Soil Stewardship**
+1. **Soil & Nutrient Management:** Balance N-P-K ratios based on official Soil Health Card guidelines; prioritize neem-coated urea and organic bio-fertilizers.
+2. **Organic Pest Management:** Deploy 10,000 ppm Neem oil spray with appropriate surfactant upon early detection of sucking pests.
+3. **Market Linkages:** Leverage the e-NAM (National Agriculture Market) platform for transparent inter-mandi price discovery and minimum support prices (MSP).`;
+  } else if (domain === "medical" || q.includes("health") || q.includes("fever") || q.includes("headache") || q.includes("doctor")) {
+    answer = `**BharatConnect Clinical Advisory Protocol**
+
+**Clinical Guidance & Symptom Review**
+1. **Rest & Hydration:** Maintain continuous fluid intake with oral rehydration solutions (ORS) and ensure adequate physical rest.
+2. **Systematic Monitoring:** Record vitals and body temperature regularly. Note any red-flag indicators like shortness of breath, localized sharp pain, or altered consciousness.
+3. **Clinical Evaluation:** Consult a qualified healthcare professional promptly if symptoms persist beyond 48 hours or worsen.
+
+**Professional Advisory Note:**
+This response is for informational and educational purposes and does not replace in-person diagnosis by a certified medical practitioner.`;
+  } else if (domain === "coding" || q.includes("code") || q.includes("python") || q.includes("javascript") || q.includes("react")) {
+    if (q.includes("prime")) {
+      answer = `**Prime Number Verification (Python)**
+
+Here is a clean, optimized Python implementation to determine whether a given integer is prime:
+
+\`\`\`python
+def is_prime(n: int) -> bool:
+    if n <= 1:
+        return False
+    if n <= 3:
+        return True
+    if n % 2 == 0 or n % 3 == 0:
+        return False
+    i = 5
+    while i * i <= n:
+        if n % i == 0 or n % (i + 2) == 0:
+            return False
+        i += 6
+    return True
+
+if __name__ == "__main__":
+    test_numbers = [2, 3, 4, 17, 25, 29, 97, 100]
+    for num in test_numbers:
+        print(f"{num}: {'Prime' if is_prime(num) else 'Not Prime'}")
 \`\`\`
 
-**Key Architectural Takeaways**
-1. **Automatic Retry Backoff:** Encapsulates network boundaries with exponential delays and randomized jitter.
-2. **Local Machine Storage State:** Guarantees zero data loss during network interruptions by failing fast after bounded attempts.`;
+**Time Complexity:** O(√n) with 6k±1 optimization.`;
+    } else if (q.includes("fibonacci")) {
+      answer = `**Fibonacci Series Generator (Python)**
+
+\`\`\`python
+def fibonacci(n: int) -> list[int]:
+    if n <= 0:
+        return []
+    if n == 1:
+        return [0]
+    sequence = [0, 1]
+    while len(sequence) < n:
+        sequence.append(sequence[-1] + sequence[-2])
+    return sequence
+
+if __name__ == "__main__":
+    print("First 10 Fibonacci numbers:", fibonacci(10))
+\`\`\``;
+    } else {
+      answer = `**Software Engineering Guidance**
+
+For clean, production-grade code:
+1. **Modularity & Types:** Enforce strong typing (TypeScript, Python type hints) and clear boundary interfaces.
+2. **Error Boundaries:** Use structured exception handling and graceful fallbacks around network and I/O boundaries.
+3. **Pure Logic:** Separate business calculation logic from presentation components.`;
     }
   } else if (domain === "legal" || q.includes("law") || q.includes("contract") || q.includes("ipc") || q.includes("bns")) {
     answer = `**BharatConnect Legal & Regulatory Counsel Protocol**
 
-**Statutory Framework Overview**
-Under the modernized Indian legal framework, including the Bharatiya Nyaya Sanhita (BNS) and commercial contract standards:
-1. **Essential Contractual Elements:** Every valid agreement requires clear offer, valid acceptance, lawful consideration, free consent, and unambiguous legal object.
-2. **Dispute Resolution Mechanism:** Standard agreements must incorporate structured arbitration or mediation clauses under the Arbitration and Conciliation Act.
-3. **Statutory Evidentiary Value:** Electronic execution via Aadhaar e-Sign is recognized with full legal admissibility under Section 10A of the Information Technology Act (2000).`;
-  } else if (domain === "agriculture" || q.includes("crop") || q.includes("farmer") || q.includes("kisan")) {
-    answer = `**BharatConnect Krishi Ratna Agronomic Protocol**
-
-**Agri-Advisory & Soil Stewardship**
-1. **Nutrient Management:** Balance N-P-K ratios based on official Soil Health Card recommendations; utilize neem-coated urea and organic bio-fertilizers.
-2. **Organic Pest Management:** Apply Neem oil spray (10,000 ppm) with appropriate surfactant upon initial detection of sucking pests to minimize chemical costs.
-3. **Market Linkages:** Leverage the e-NAM (National Agriculture Market) platform for transparent inter-mandi price discovery and MSP updates.`;
+**Indian Jurisprudence Framework**
+1. **Essential Contractual Elements:** Every legally binding agreement requires a clear offer, lawful acceptance, consideration, free consent, and unambiguous lawful object.
+2. **Bharatiya Nyaya Sanhita (BNS):** Modern penal provisions supersede the Indian Penal Code with updated digital and electronic evidence standards.
+3. **Electronic Execution:** Digital execution via Aadhaar e-Sign is recognized with legal validity under Section 10A of the Information Technology Act.`;
   } else {
-    answer = `**Executive Overview & Strategic Analysis**
+    answer = `**BharatConnect Intelligence Overview**
 
-Analysis synthesized for: "${query.slice(0, 100)}"
+Regarding your query: "${query.slice(0, 120)}"
 
-**Key Actionable Steps**
-1. **Scope Definition:** Establish clear boundary parameters, security safeguards, and baseline performance benchmarks.
-2. **Implementation Strategy:** Deploy validated methodologies supported by resilient local storage and failover mechanisms.
-3. **Audit & Review:** Maintain local machine records, review benchmark results, and export audit trails for verification.
+The cloud reasoning nodes are momentarily busy or refreshing. Here is direct guidance on this topic:
 
-**Recommended Next Steps**
-• Review project scope against regional requirements and available resources.
-• Export consultation records to PDF or CSV for local documentation.`;
+• Please verify that your prompt specifies any regional context or technical requirements.
+• For immediate assistance, you can select one of the specialized expert domains (Krishi/Agriculture, Health, Software Engineering, Legal, or Business) from the domain selector above.
+• Resubmit your query in a few moments for full real-time cloud AI analysis.`;
   }
 
   return {
     text: answer,
     proactiveSuggestions: [
-      "Examine edge cases and statutory implications",
-      "Translate this analysis into regional Indian language",
-      "Generate an executive CSV audit log for local record-keeping",
+      "Ask a follow-up question on this topic",
+      "Translate response into regional language",
+      "Export consultation record to PDF or CSV",
     ],
     actionItems: [
-      "Offline cache synchronized",
-      "Data stored locally with zero cloud leakage",
+      "Processed locally with zero data leakage",
+      "Saved to local machine audit vault",
     ],
   };
 }
