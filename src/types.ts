@@ -75,6 +75,9 @@ export interface InquiryRecord {
   responseSummary: string;
   modelUsed: string;
   isOffline: boolean;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
 }
 
 export interface UserRecord {
@@ -89,6 +92,7 @@ export interface UserRecord {
   phone?: string;
   purpose?: string;
   status: 'Active' | 'Verified' | 'Enterprise Trial';
+  role?: 'admin' | 'user';
   queriesRun?: number;
   lastActive?: string;
 }

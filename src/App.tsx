@@ -36,25 +36,13 @@ export default function App() {
     try {
       const saved = localStorage.getItem('bharatconnect_active_user_v1');
       if (saved) return JSON.parse(saved);
-      // Default profile initialized for Shaikh M. Abrar (Orion Technologies)
-      return {
-        id: 'usr_init_shaikh_abrar',
-        fullName: 'Shaikh M. Abrar',
-        email: 'shaikhabrar663@gmail.com',
-        phone: '+91 98234 56789',
-        organization: 'Orion Technologies',
-        profession: 'Chief Solutions Architect & Lead Engineer',
-        primaryDomain: 'coding',
-        language: 'en',
-        purpose: 'Enterprise-grade deployment of BharatConnectAI with local zero-leakage disk persistence.',
-        registrationDate: new Date().toISOString(),
-        status: 'Verified',
-      };
+      return null;
     } catch {
       return null;
     }
   });
   const [isSignupModalOpen, setIsSignupModalOpen] = useState<boolean>(false);
+  const [pendingMessage, setPendingMessage] = useState<{ prompt: string; doc?: DocumentAttachment } | null>(null);
 
   // Separate chat sessions maintained independently per expert
   const [sessions, setSessions] = useState<Record<ExpertDomainId, ChatMessage[]>>({
@@ -265,8 +253,17 @@ export default function App() {
   };
 
   // Send message to AI Expert
-  const handleSendMessage = async (prompt: string, docAttachment?: DocumentAttachment) => {
+  const handleSendMessage = async (prompt: string, docAttachment?: DocumentAttachment, overrideUser?: UserRecord | null) => {
     if (!prompt && !docAttachment) return;
+
+    const activeUser = overrideUser !== undefined ? overrideUser : currentUser;
+
+    // Gate first-time visitors to register profile in real-time before consultation
+    if (!activeUser) {
+      setPendingMessage({ prompt, doc: docAttachment });
+      setIsSignupModalOpen(true);
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -321,7 +318,7 @@ export default function App() {
         return;
       }
 
-      // Online Server-Side Gemini Request
+      // Online Server-Side Gemini Request with Real-Time User Telemetry
       const payload = {
         prompt: prompt,
         history: currentDomainMessages.map(m => ({ role: m.role, content: m.content })),
@@ -333,6 +330,9 @@ export default function App() {
           fileType: docAttachment.type,
           content: docAttachment.extractedText,
         } : null,
+        userId: activeUser.id,
+        userName: activeUser.fullName,
+        userEmail: activeUser.email,
       };
 
       const res = await fetch('/api/chat', {
@@ -422,6 +422,35 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {currentTab === 'workspace' && (
           <div className="space-y-5">
+            {/* Quick Registration Invitation Banner for New Visitors */}
+            {!currentUser && (
+              <div className="bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 border border-orange-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs animate-in fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-orange-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs">
+                    ✦
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-bold text-slate-950 flex items-center gap-2">
+                      <span>Welcome to BharatConnectAI!</span>
+                      <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded bg-orange-100 text-orange-900 border border-orange-200">
+                        Zero-Leakage
+                      </span>
+                    </h2>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      Register your profile in 30 seconds so all consultation telemetry, expert domain inquiries, and analytics are linked to your organization.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  id="workspace-register-banner-btn"
+                  onClick={() => setIsSignupModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-white text-xs font-semibold shrink-0 cursor-pointer shadow-xs transition-colors"
+                >
+                  Create User Profile
+                </button>
+              </div>
+            )}
+
             {/* AI Expert Persona Selector */}
             <ExpertSelector
               selectedDomain={selectedDomain}
@@ -457,7 +486,7 @@ export default function App() {
         )}
 
         {currentTab === 'admin' && (
-          <AdminPanel />
+          <AdminPanel onBackToWorkspace={() => setCurrentTab('workspace')} />
         )}
 
         {currentTab === 'pricing' && (
@@ -492,7 +521,10 @@ export default function App() {
       {/* User Registration & Profile Data Collection Modal */}
       <UserSignupModal
         isOpen={isSignupModalOpen}
-        onClose={() => setIsSignupModalOpen(false)}
+        onClose={() => {
+          setIsSignupModalOpen(false);
+          setPendingMessage(null);
+        }}
         currentUser={currentUser}
         onUserRegistered={(savedUser) => {
           setCurrentUser(savedUser);
@@ -500,6 +532,13 @@ export default function App() {
             localStorage.setItem('bharatconnect_active_user_v1', JSON.stringify(savedUser));
           } catch (e) {
             console.warn('User save warning:', e);
+          }
+          if (pendingMessage) {
+            const { prompt: p, doc: d } = pendingMessage;
+            setPendingMessage(null);
+            setTimeout(() => {
+              handleSendMessage(p, d, savedUser);
+            }, 300);
           }
         }}
       />

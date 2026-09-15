@@ -11,7 +11,8 @@ import {
   ChevronDown,
   HardDrive,
   User,
-  UserPlus
+  UserPlus,
+  Lock
 } from 'lucide-react';
 import { LanguageCode, UserRecord } from '../types';
 import { LANGUAGES, UI_TRANSLATIONS } from '../data/languages';
@@ -175,17 +176,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="nav-tab-admin"
               onClick={() => setCurrentTab('admin')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
                 currentTab === 'admin'
                   ? 'bg-slate-900 text-white'
                   : 'text-slate-700 hover:bg-slate-100'
               }`}
+              title="Restricted Administrator Console (Passcode Protected)"
             >
-              <HardDrive className="w-4 h-4 text-amber-500" />
+              <Lock className="w-3.5 h-3.5 text-amber-500" />
               <div className="flex items-center gap-1.5">
-                <span>Admin & Storage</span>
-                <span className="text-[10px] uppercase font-bold bg-amber-100 text-amber-900 px-1 rounded">
-                  CSV
+                <span>Admin Console</span>
+                <span className="text-[9px] uppercase font-bold tracking-wider bg-amber-100 text-amber-900 px-1 py-0.5 rounded border border-amber-200">
+                  Protected
                 </span>
               </div>
             </button>
@@ -317,9 +319,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           <button
             onClick={() => setCurrentTab('admin')}
-            className={`py-1 px-2 rounded shrink-0 ${currentTab === 'admin' ? 'text-amber-600 font-bold bg-amber-50' : 'text-slate-600'}`}
+            className={`py-1 px-2 rounded shrink-0 flex items-center gap-1 ${currentTab === 'admin' ? 'text-amber-600 font-bold bg-amber-50' : 'text-slate-600'}`}
           >
-            Admin & CSV
+            <Lock className="w-3 h-3 text-amber-500" />
+            <span>Admin</span>
           </button>
           <button
             onClick={() => setCurrentTab('pricing')}

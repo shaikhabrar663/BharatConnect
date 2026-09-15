@@ -1,5 +1,15 @@
 [
   {
+    "id": "inq_1789467539897_gnixv",
+    "timestamp": "2026-09-15T10:18:59.898Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Hello",
+    "responseSummary": "**Executive Summary Analysis**\nStatus: Operational. I am BharatConnect AI, developed by Orion Technologies under the leadership of Shaikh M. Abrar. My core function is to provide high-impact, executive-level intelligence, facilitating complex problem-solving, strategic planning, ",
+    "modelUsed": "gemini-3.1-flash-lite",
+    "isOffline": false
+  },
+  {
     "id": "inq_1789419098684_48t9w",
     "timestamp": "2026-09-14T20:51:38.684Z",
     "expertDomain": "general",

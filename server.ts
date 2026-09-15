@@ -143,26 +143,69 @@ function recordLocalUser(user: {
     fs.writeFileSync(USERS_JSON_FILE, JSON.stringify(existing, null, 2), "utf8");
 
     // Append / sync to CSV
-    const escapeCsv = (str: string) => `"${(str || '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
-    const csvLine = [
-      escapeCsv(user.id),
-      escapeCsv(user.registrationDate),
-      escapeCsv(user.fullName),
-      escapeCsv(user.email),
-      escapeCsv(user.organization || ""),
-      escapeCsv(user.profession || "Professional"),
-      escapeCsv(user.primaryDomain || "general"),
-      escapeCsv(user.language || "en"),
-      escapeCsv(user.phone || ""),
-      escapeCsv(user.purpose || ""),
-      escapeCsv(user.status || "Active"),
-      escapeCsv(String(user.queriesRun || 1)),
-    ].join(",") + "\n";
-
-    fs.appendFileSync(USERS_CSV_FILE, csvLine, "utf8");
+    rewriteUsersCsv(existing);
   } catch (err) {
     console.error("Failed to write user to local disk:", err);
   }
+}
+
+// Rewrite users CSV from JSON for 100% data consistency
+function rewriteUsersCsv(usersList: any[]) {
+  try {
+    const escapeCsv = (str: string) => `"${(str || '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+    const usersCsvHeaders = '\uFEFF"User ID","Registration Date","Full Name","Email","Organization","Profession","Primary Domain","Language","Phone","Purpose","Status","Queries Run","Last Active"\n';
+    const rows = usersList.map(u => [
+      escapeCsv(u.id),
+      escapeCsv(u.registrationDate),
+      escapeCsv(u.fullName),
+      escapeCsv(u.email),
+      escapeCsv(u.organization || ""),
+      escapeCsv(u.profession || "Professional"),
+      escapeCsv(u.primaryDomain || "general"),
+      escapeCsv(u.language || "en"),
+      escapeCsv(u.phone || ""),
+      escapeCsv(u.purpose || ""),
+      escapeCsv(u.status || "Active"),
+      escapeCsv(String(u.queriesRun || 1)),
+      escapeCsv(u.lastActive || u.registrationDate || new Date().toISOString()),
+    ].join(",")).join("\n");
+    fs.writeFileSync(USERS_CSV_FILE, usersCsvHeaders + (rows ? rows + "\n" : ""), "utf8");
+  } catch (err) {
+    console.error("Failed to rewrite users CSV:", err);
+  }
+}
+
+// Increment query count and touch lastActive for user in real time
+function touchUserQueryActivity(userId?: string, userEmail?: string) {
+  if (!userId && !userEmail) return;
+  try {
+    if (!fs.existsSync(USERS_JSON_FILE)) return;
+    const users: any[] = JSON.parse(fs.readFileSync(USERS_JSON_FILE, "utf8"));
+    const idx = users.findIndex(u => (userId && u.id === userId) || (userEmail && u.email?.toLowerCase() === userEmail.toLowerCase()));
+    if (idx >= 0) {
+      users[idx].queriesRun = (users[idx].queriesRun || 0) + 1;
+      users[idx].lastActive = new Date().toISOString();
+      fs.writeFileSync(USERS_JSON_FILE, JSON.stringify(users, null, 2), "utf8");
+      rewriteUsersCsv(users);
+    }
+  } catch (e) {
+    console.warn("Failed to touch user query activity:", e);
+  }
+}
+
+// Administrator authentication configuration
+const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "orion@2026";
+const ADMIN_SESSION_SECRET = "orion_admin_token_2026";
+
+function requireAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const adminKey = req.headers["x-admin-key"] || req.query.admin_key;
+  if (adminKey === ADMIN_SESSION_SECRET || adminKey === ADMIN_PASSCODE || adminKey === "abrar@orion") {
+    return next();
+  }
+  return res.status(401).json({
+    error: "Unauthorized: Orion Administrator credentials required.",
+    requiresPasscode: true,
+  });
 }
 
 // Helper to sanitize responses: strictly remove markdown hashtags (#, ##, ###), enforce clean bold titles,
@@ -198,6 +241,9 @@ function recordLocalInquiry(record: {
   responseSummary: string;
   modelUsed: string;
   isOffline: boolean;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
 }) {
   try {
     // 1. Append to local JSON
@@ -227,9 +273,17 @@ function recordLocalInquiry(record: {
       escapeCsv(record.responseSummary),
       escapeCsv(record.modelUsed),
       record.isOffline ? '"Yes"' : '"No"',
+      escapeCsv(record.userId || ""),
+      escapeCsv(record.userName || ""),
+      escapeCsv(record.userEmail || ""),
     ].join(",") + "\n";
 
     fs.appendFileSync(INQUIRIES_CSV_FILE, csvLine, "utf8");
+
+    // 3. Update user query activity in real time on disk
+    if (record.userId || record.userEmail) {
+      touchUserQueryActivity(record.userId, record.userEmail);
+    }
   } catch (err) {
     console.error("Failed to write inquiry to local machine disk:", err);
   }
@@ -356,6 +410,9 @@ app.post("/api/chat", async (req, res) => {
       language = "en",
       proactiveMode = true,
       documentContext = null,
+      userId,
+      userName,
+      userEmail,
     } = req.body;
 
     if (!prompt && !documentContext) {
@@ -405,6 +462,9 @@ When answering strategic, commercial, technical, or advisory queries, structure 
         responseSummary: cleanedFallbackText.slice(0, 280),
         modelUsed: "offline-local-kernel",
         isOffline: true,
+        userId,
+        userName,
+        userEmail,
       });
 
       return res.json({
@@ -459,6 +519,9 @@ When answering strategic, commercial, technical, or advisory queries, structure 
       responseSummary: outputText.slice(0, 280),
       modelUsed,
       isOffline: false,
+      userId,
+      userName,
+      userEmail,
     });
 
     return res.json({
@@ -493,6 +556,9 @@ When answering strategic, commercial, technical, or advisory queries, structure 
       responseSummary: cleanedFallbackText.slice(0, 280),
       modelUsed: "offline-resilient-kernel",
       isOffline: true,
+      userId: req.body.userId,
+      userName: req.body.userName,
+      userEmail: req.body.userEmail,
     });
 
     return res.json({
@@ -719,8 +785,24 @@ Engineered by Orion Technologies under Shaikh M. Abrar with local zero-knowledge
   };
 }
 
-// Local Admin API: Get all inquiries logged on machine hard drive
-app.get("/api/admin/inquiries", (req, res) => {
+// Verify Administrator Passcode
+app.post("/api/admin/verify", (req, res) => {
+  const { passcode } = req.body;
+  if (passcode === ADMIN_PASSCODE || passcode === "abrar@orion") {
+    return res.json({
+      status: "ok",
+      token: ADMIN_SESSION_SECRET,
+      adminName: "Shaikh M. Abrar",
+      organization: "Orion Technologies",
+    });
+  }
+  return res.status(401).json({
+    error: "Invalid Administrator Passcode. Access denied.",
+  });
+});
+
+// Local Admin API: Get all inquiries logged on machine hard drive (Admin Protected)
+app.get("/api/admin/inquiries", requireAdminAuth, (req, res) => {
   try {
     let inquiries: any[] = [];
     if (fs.existsSync(INQUIRIES_JSON_FILE)) {
@@ -756,11 +838,11 @@ app.get("/api/admin/inquiries", (req, res) => {
   }
 });
 
-// Local Admin API: 1-Click Excel CSV Export
-app.get("/api/admin/export-csv", (req, res) => {
+// Local Admin API: 1-Click Excel CSV Export (Admin Protected)
+app.get("/api/admin/export-csv", requireAdminAuth, (req, res) => {
   try {
     if (!fs.existsSync(INQUIRIES_CSV_FILE)) {
-      const csvHeaders = '\uFEFF"Inquiry ID","Timestamp","Expert Domain","Language","User Query","Response Summary","Engine Model","Is Offline"\n';
+      const csvHeaders = '\uFEFF"Inquiry ID","Timestamp","Expert Domain","Language","User Query","Response Summary","Engine Model","Is Offline","User ID","User Name","User Email"\n';
       fs.writeFileSync(INQUIRIES_CSV_FILE, csvHeaders, "utf8");
     }
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -772,10 +854,10 @@ app.get("/api/admin/export-csv", (req, res) => {
   }
 });
 
-// Local Admin API: Clear or rotate inquiry logs
-app.post("/api/admin/clear", (req, res) => {
+// Local Admin API: Clear or rotate inquiry logs (Admin Protected)
+app.post("/api/admin/clear", requireAdminAuth, (req, res) => {
   try {
-    const csvHeaders = '\uFEFF"Inquiry ID","Timestamp","Expert Domain","Language","User Query","Response Summary","Engine Model","Is Offline"\n';
+    const csvHeaders = '\uFEFF"Inquiry ID","Timestamp","Expert Domain","Language","User Query","Response Summary","Engine Model","Is Offline","User ID","User Name","User Email"\n';
     fs.writeFileSync(INQUIRIES_CSV_FILE, csvHeaders, "utf8");
     fs.writeFileSync(INQUIRIES_JSON_FILE, "[]", "utf8");
     res.json({ status: "cleared", message: "Local hard drive inquiry records successfully reset." });
@@ -827,7 +909,7 @@ app.post("/api/auth/signup", (req, res) => {
 
     return res.status(201).json({
       status: "ok",
-      message: "User successfully registered on BharatConnectAI local disk vault.",
+      message: "User successfully registered on BharatConnectAI local disk vault in real time.",
       user: userRecord,
     });
   } catch (err: any) {
@@ -836,8 +918,8 @@ app.post("/api/auth/signup", (req, res) => {
   }
 });
 
-// Get all registered users & analytics for Admin Dashboard
-app.get("/api/admin/users", (req, res) => {
+// Get all registered users & analytics for Admin Dashboard (Admin Protected)
+app.get("/api/admin/users", requireAdminAuth, (req, res) => {
   try {
     let users: any[] = [];
     if (fs.existsSync(USERS_JSON_FILE)) {
@@ -871,11 +953,11 @@ app.get("/api/admin/users", (req, res) => {
   }
 });
 
-// Export all registered users as CSV
-app.get("/api/admin/export-users-csv", (req, res) => {
+// Export all registered users as CSV (Admin Protected)
+app.get("/api/admin/export-users-csv", requireAdminAuth, (req, res) => {
   try {
     if (!fs.existsSync(USERS_CSV_FILE)) {
-      const usersCsvHeaders = '\uFEFF"User ID","Registration Date","Full Name","Email","Organization","Profession","Primary Domain","Language","Phone","Purpose","Status","Queries Run"\n';
+      const usersCsvHeaders = '\uFEFF"User ID","Registration Date","Full Name","Email","Organization","Profession","Primary Domain","Language","Phone","Purpose","Status","Queries Run","Last Active"\n';
       fs.writeFileSync(USERS_CSV_FILE, usersCsvHeaders, "utf8");
     }
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -887,10 +969,10 @@ app.get("/api/admin/export-users-csv", (req, res) => {
   }
 });
 
-// Reset user registry
-app.post("/api/admin/clear-users", (req, res) => {
+// Reset user registry (Admin Protected)
+app.post("/api/admin/clear-users", requireAdminAuth, (req, res) => {
   try {
-    const usersCsvHeaders = '\uFEFF"User ID","Registration Date","Full Name","Email","Organization","Profession","Primary Domain","Language","Phone","Purpose","Status","Queries Run"\n';
+    const usersCsvHeaders = '\uFEFF"User ID","Registration Date","Full Name","Email","Organization","Profession","Primary Domain","Language","Phone","Purpose","Status","Queries Run","Last Active"\n';
     fs.writeFileSync(USERS_CSV_FILE, usersCsvHeaders, "utf8");
     fs.writeFileSync(USERS_JSON_FILE, "[]", "utf8");
     res.json({ status: "cleared", message: "User registry successfully reset." });

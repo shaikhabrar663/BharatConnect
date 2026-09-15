@@ -26,7 +26,12 @@ import {
   ArrowRight,
   Globe2,
   Lock,
-  Activity
+  Activity,
+  ShieldCheck,
+  KeyRound,
+  EyeOff,
+  LogOut,
+  AlertCircle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -54,9 +59,27 @@ const DOMAIN_COLORS: Record<string, string> = {
   education: '#a855f7',
 };
 
-export const AdminPanel: React.FC = () => {
+interface AdminPanelProps {
+  onBackToWorkspace?: () => void;
+}
+
+export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToWorkspace }) => {
   // Navigation tabs: 'users' (User data collection dashboard) vs 'inquiries' (Disk logs & engine metrics)
   const [activeTab, setActiveTab] = useState<'users' | 'inquiries'>('users');
+
+  // Administrator Authorization State
+  const [adminToken, setAdminToken] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('bharatconnect_admin_token_v1');
+    } catch {
+      return null;
+    }
+  });
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeError, setPasscodeError] = useState<string | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string>(new Date().toLocaleTimeString());
 
   // User Registry State
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -86,13 +109,65 @@ export const AdminPanel: React.FC = () => {
   const [selectedInquiry, setSelectedInquiry] = useState<InquiryRecord | null>(null);
   const [confirmingInquiryReset, setConfirmingInquiryReset] = useState(false);
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Fetch users from server disk
-  const fetchUsers = async () => {
+  // Verify Admin Passcode
+  const handleVerifyPasscode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasscodeError(null);
+    if (!passcodeInput.trim()) {
+      setPasscodeError('Please enter the Administrator Passcode.');
+      return;
+    }
+
+    setIsVerifying(true);
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: passcodeInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.token) {
+        throw new Error(data.error || 'Invalid passcode. Access denied.');
+      }
+
+      sessionStorage.setItem('bharatconnect_admin_token_v1', data.token);
+      setAdminToken(data.token);
+      setPasscodeInput('');
+      loadAllData(data.token);
+    } catch (err: any) {
+      setPasscodeError(err.message || 'Verification failed. Please check passcode.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleAdminLogout = () => {
+    try {
+      sessionStorage.removeItem('bharatconnect_admin_token_v1');
+    } catch (e) {
+      console.warn(e);
+    }
+    setAdminToken(null);
+    setPasscodeInput('');
+    setPasscodeError(null);
+  };
+
+  // Fetch users from server disk
+  const fetchUsers = async (token?: string, silent = false) => {
+    const key = token || adminToken;
+    if (!key) return;
+    try {
+      const res = await fetch('/api/admin/users', {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.status === 401) {
+        handleAdminLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setUsers(data.users || []);
@@ -102,16 +177,25 @@ export const AdminPanel: React.FC = () => {
           csvPath: data.csvPath || './data/users.csv',
           jsonPath: data.jsonPath || './data/users.json',
         });
+        setLastSyncTime(new Date().toLocaleTimeString());
       }
     } catch (err) {
-      console.warn('Failed to fetch user directory from server:', err);
+      if (!silent) console.warn('Failed to fetch user directory from server:', err);
     }
   };
 
   // Fetch inquiries from server disk
-  const fetchInquiries = async () => {
+  const fetchInquiries = async (token?: string, silent = false) => {
+    const key = token || adminToken;
+    if (!key) return;
     try {
-      const res = await fetch('/api/admin/inquiries');
+      const res = await fetch('/api/admin/inquiries', {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.status === 401) {
+        handleAdminLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setInquiries(data.inquiries || []);
@@ -122,42 +206,57 @@ export const AdminPanel: React.FC = () => {
           totalInquiries: data.totalInquiries || 0,
           diskUsageFormatted: data.diskUsageFormatted || '0 KB',
         });
+        setLastSyncTime(new Date().toLocaleTimeString());
       }
     } catch (err) {
-      console.warn('Failed to fetch local inquiries from server:', err);
+      if (!silent) console.warn('Failed to fetch local inquiries from server:', err);
     }
   };
 
-  const loadAllData = async () => {
+  const loadAllData = async (token?: string) => {
     setIsLoading(true);
-    await Promise.all([fetchUsers(), fetchInquiries()]);
+    await Promise.all([fetchUsers(token), fetchInquiries(token)]);
     setIsLoading(false);
   };
 
+  // Auto-sync polling every 5 seconds when admin token is active
   useEffect(() => {
-    loadAllData();
-  }, []);
+    if (adminToken) {
+      loadAllData(adminToken);
+      const interval = setInterval(() => {
+        fetchUsers(adminToken, true);
+        fetchInquiries(adminToken, true);
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [adminToken]);
 
   // Export Users CSV
   const handleExportUsersCSV = () => {
-    window.location.href = '/api/admin/export-users-csv';
+    if (!adminToken) return;
+    window.location.href = `/api/admin/export-users-csv?admin_key=${encodeURIComponent(adminToken)}`;
     setStatusMessage('Exporting registered users CSV file directly from hard drive...');
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
   // Export Inquiries CSV
   const handleExportInquiriesCSV = () => {
-    window.location.href = '/api/admin/export-csv';
+    if (!adminToken) return;
+    window.location.href = `/api/admin/export-csv?admin_key=${encodeURIComponent(adminToken)}`;
     setStatusMessage('Downloading Excel-compatible CSV directly from your machine hard drive...');
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
   // Clear Users Log
   const handleClearUsers = async () => {
+    if (!adminToken) return;
     try {
-      const res = await fetch('/api/admin/clear-users', { method: 'POST' });
+      const res = await fetch('/api/admin/clear-users', {
+        method: 'POST',
+        headers: { 'x-admin-key': adminToken },
+      });
       if (res.ok) {
-        fetchUsers();
+        fetchUsers(adminToken);
         setStatusMessage('User directory reset successfully on local disk.');
         setTimeout(() => setStatusMessage(null), 3500);
       }
@@ -171,10 +270,14 @@ export const AdminPanel: React.FC = () => {
 
   // Clear Inquiries Log
   const handleClearInquiries = async () => {
+    if (!adminToken) return;
     try {
-      const res = await fetch('/api/admin/clear', { method: 'POST' });
+      const res = await fetch('/api/admin/clear', {
+        method: 'POST',
+        headers: { 'x-admin-key': adminToken },
+      });
       if (res.ok) {
-        fetchInquiries();
+        fetchInquiries(adminToken);
         setStatusMessage('Local inquiry records cleared from machine disk.');
         setTimeout(() => setStatusMessage(null), 3500);
       }
@@ -238,6 +341,120 @@ export const AdminPanel: React.FC = () => {
     fill: DOMAIN_COLORS[exp.id] || '#64748b'
   }));
 
+  // =========================================================================
+  // ACCESS CONTROL GATE: RESTRICTED TO AUTHORIZED ADMINISTRATORS
+  // =========================================================================
+  if (!adminToken) {
+    return (
+      <div className="max-w-xl mx-auto py-12 px-4 animate-in fade-in duration-300">
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xl overflow-hidden">
+          {/* Header */}
+          <div className="bg-slate-950 p-6 text-white border-b border-slate-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-orange-500/15 border border-orange-500/30 flex items-center justify-center text-orange-400">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
+                    <span>Orion Administrative Console</span>
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                      Restricted Access
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Lead Systems Architect • Shaikh M. Abrar
+                  </p>
+                </div>
+              </div>
+
+              <img src="/orion-logo.svg" alt="Orion Technologies" className="w-7 h-7 opacity-80" />
+            </div>
+          </div>
+
+          <div className="p-6 space-y-5">
+            <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-amber-950">Administrative & Disk Storage Security Gate</p>
+                  <p className="mt-1 text-amber-800">
+                    This terminal manages confidential user registries, physical hard drive backups, real-time analytics, and data wipe utilities. Standard users only operate on the AI Workspace.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleVerifyPasscode} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Administrator Passcode
+                </label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    id="admin-passcode-input"
+                    type={showPassword ? 'text' : 'password'}
+                    value={passcodeInput}
+                    onChange={(e) => setPasscodeInput(e.target.value)}
+                    placeholder="Enter Administrator Passcode"
+                    autoFocus
+                    className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="mt-2 text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Passcode: <code className="text-slate-800 font-mono bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-semibold">orion@2026</code></span>
+                  <span className="text-slate-400">Orion Technologies</span>
+                </div>
+              </div>
+
+              {passcodeError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{passcodeError}</span>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center gap-3">
+                {onBackToWorkspace && (
+                  <button
+                    type="button"
+                    onClick={onBackToWorkspace}
+                    className="w-1/2 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    Return to Workspace
+                  </button>
+                )}
+                <button
+                  id="submit-admin-unlock-btn"
+                  type="submit"
+                  disabled={isVerifying}
+                  className={`py-2.5 rounded-xl bg-slate-950 text-white text-xs font-semibold hover:bg-slate-900 transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 ${onBackToWorkspace ? 'w-1/2' : 'w-full'}`}
+                >
+                  {isVerifying ? (
+                    <span>Authenticating...</span>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5 text-orange-400" />
+                      <span>Authenticate & Unlock</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Top Banner & Title */}
@@ -255,38 +472,58 @@ export const AdminPanel: React.FC = () => {
                     Zero-Leakage Disk Storage
                   </span>
                 </h1>
-                <p className="text-xs text-slate-500 font-medium">
-                  Direct physical SSD/Hard Drive persistence • User Data Collection & Auditing Engine
-                </p>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-medium">
+                  <span>Physical SSD/HDD Persistence</span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live Sync: {lastSyncTime}
+                  </span>
+                  <span>•</span>
+                  <span className="text-slate-600">Lead: Shaikh M. Abrar</span>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Tab Navigation Switches */}
-          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/80 shrink-0">
+          <div className="flex items-center gap-3">
+            {/* Tab Navigation Switches */}
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/80 shrink-0">
+              <button
+                id="admin-tab-users-btn"
+                onClick={() => setActiveTab('users')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'users'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 text-orange-600" />
+                <span>User Signups ({users.length})</span>
+              </button>
+              <button
+                id="admin-tab-inquiries-btn"
+                onClick={() => setActiveTab('inquiries')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'inquiries'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                <span>Inquiry Records ({inquiries.length})</span>
+              </button>
+            </div>
+
+            {/* Lock Console Button */}
             <button
-              id="admin-tab-users-btn"
-              onClick={() => setActiveTab('users')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'users'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              id="admin-logout-btn"
+              onClick={handleAdminLogout}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+              title="Lock Administrator Console"
             >
-              <Users className="w-3.5 h-3.5 text-orange-600" />
-              <span>User Signups ({users.length})</span>
-            </button>
-            <button
-              id="admin-tab-inquiries-btn"
-              onClick={() => setActiveTab('inquiries')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'inquiries'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Activity className="w-3.5 h-3.5 text-blue-600" />
-              <span>Inquiry Records ({inquiries.length})</span>
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Lock Console</span>
             </button>
           </div>
         </div>
@@ -828,6 +1065,7 @@ export const AdminPanel: React.FC = () => {
                 <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-200/80">
                   <tr>
                     <th className="py-3 px-4">Date & Time</th>
+                    <th className="py-3 px-4">User</th>
                     <th className="py-3 px-4">Discipline</th>
                     <th className="py-3 px-4">Language</th>
                     <th className="py-3 px-4">User Query</th>
@@ -838,7 +1076,7 @@ export const AdminPanel: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {filteredInquiries.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-10 text-slate-400">
+                      <td colSpan={7} className="text-center py-10 text-slate-400">
                         No inquiries logged yet.
                       </td>
                     </tr>
@@ -851,6 +1089,16 @@ export const AdminPanel: React.FC = () => {
                         <tr key={inq.id} className="hover:bg-slate-50/60 transition-colors">
                           <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono text-[11px]">
                             {new Date(inq.timestamp).toLocaleDateString()} {new Date(inq.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            {inq.userName ? (
+                              <div>
+                                <span className="font-semibold text-slate-900 block">{inq.userName}</span>
+                                <span className="text-[10px] text-slate-400 font-mono">{inq.userEmail || inq.userId || ''}</span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">Anonymous</span>
+                            )}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-800 border border-slate-200">
@@ -1002,6 +1250,19 @@ export const AdminPanel: React.FC = () => {
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              {selectedInquiry.userName && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block font-bold uppercase">Submitting User</span>
+                    <span className="font-bold text-slate-900 text-sm">{selectedInquiry.userName}</span>
+                    <span className="text-[11px] text-slate-500 block font-mono">{selectedInquiry.userEmail}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold">
+                    Registered
+                  </span>
+                </div>
+              )}
+
               <div>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                   User Inquiry Prompt
