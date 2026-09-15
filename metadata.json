@@ -1,0 +1,10 @@
+{
+  "name": "BharatConnect",
+  "description": "AI Expert platform for instant multi-domain assistance, voice interaction, document analysis, and vernacular Indian language support by Orion Technologies.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

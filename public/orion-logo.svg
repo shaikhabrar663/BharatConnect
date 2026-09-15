@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <rect width="400" height="400" fill="#060B14" rx="32" />
+  
+  <!-- Orbiting ring behind star -->
+  <path d="M 120 220 C 105 240, 115 255, 145 250 C 185 242, 270 200, 305 170 C 325 152, 315 140, 280 148 C 240 158, 155 198, 120 220 Z" 
+        fill="none" stroke="#00C2FF" stroke-width="6" stroke-linecap="round" />
+
+  <!-- Stylized Star with sleek lines -->
+  <polygon points="200,105 222,156 278,160 234,196 248,252 200,222 152,252 166,196 122,160 178,156" 
+           fill="none" stroke="#00C2FF" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" />
+
+  <!-- Central dot -->
+  <circle cx="200" cy="180" r="7" fill="#FFFFFF" />
+
+  <!-- Foreground orbit overlap segment for 3D orbital illusion -->
+  <path d="M 230 160 C 275 145, 310 148, 305 165 C 298 180, 245 210, 210 225" 
+        fill="none" stroke="#00C2FF" stroke-width="6" stroke-linecap="round" />
+
+  <!-- Typography: ORION -->
+  <text x="200" y="305" text-anchor="middle" font-family="'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" 
+        font-weight="800" font-size="44" fill="#00C2FF" letter-spacing="4">ORION</text>
+
+  <!-- Typography: TECHNOLOGIES -->
+  <text x="200" y="340" text-anchor="middle" font-family="'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" 
+        font-weight="600" font-size="16" fill="#FFFFFF" letter-spacing="8">TECHNOLOGIES</text>
+</svg>

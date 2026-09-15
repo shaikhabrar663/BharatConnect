@@ -1,0 +1,122 @@
+[
+  {
+    "id": "inq_1789419098684_48t9w",
+    "timestamp": "2026-09-14T20:51:38.684Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Hi",
+    "responseSummary": "Greetings. I am BharatConnect AI, engineered by Orion Technologies under the direction of Shaikh M. Abrar. My systems are fully operational and synchronized to assist you with high-level analytical, technical, or strategic requirements.\n\nI am prepared to process your inquiries, s",
+    "modelUsed": "gemini-3.1-flash-lite",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789419093110_myjo0",
+    "timestamp": "2026-09-14T20:51:33.110Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Hello, what is BharatConnect?",
+    "responseSummary": "**Operational Definition of BharatConnect**\n\nBharatConnect is a conceptualized, high-velocity digital ecosystem designed to serve as the unified technological backbone for India’s rapidly scaling digital infrastructure. Developed under the aegis of Orion Technologies, spearheaded",
+    "modelUsed": "gemini-3.1-flash-lite",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789418935990_7d5e4",
+    "timestamp": "2026-09-14T20:48:55.990Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "I am going for an interview for the post of cardiac care technologist what are the top 10 question I would expect the interviewer ask",
+    "responseSummary": "**BharatConnect Strategic Synthesis Protocol**\n\n**Executive Summary**\nAnalysis completed for query: \"I am going for an interview for the post of cardiac care technologist what are t...\"\n\n**Actionable Execution Plan**\n1. **Scope Definition:** Establish clear boundary parameters, s",
+    "modelUsed": "offline-resilient-kernel",
+    "isOffline": true
+  },
+  {
+    "id": "inq_1789418881432_3drl6",
+    "timestamp": "2026-09-14T20:48:01.432Z",
+    "expertDomain": "education",
+    "language": "en",
+    "prompt": "I am going for an interview for the post of cardiac care technologist what are the top 10 question I would expect the interviewer ask",
+    "responseSummary": "**BharatConnect Strategic Synthesis Protocol**\n\n**Executive Summary**\nAnalysis completed for query: \"I am going for an interview for the post of cardiac care technologist what are t...\"\n\n**Actionable Execution Plan**\n1. **Scope Definition:** Establish clear boundary parameters, s",
+    "modelUsed": "offline-resilient-kernel",
+    "isOffline": true
+  },
+  {
+    "id": "inq_1789418274515_kh54r",
+    "timestamp": "2026-09-14T20:37:54.516Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Anticipate key risks before launching our new commercial service in India.",
+    "responseSummary": "**BharatConnect Strategic Synthesis Protocol**\n\n**Executive Summary**\nAnalysis completed for query: \"Anticipate key risks before launching our new commercial service in India....\"\n\n**Actionable Execution Plan**\n1. **Scope Definition:** Establish clear boundary parameters, securit",
+    "modelUsed": "offline-resilient-kernel",
+    "isOffline": true
+  },
+  {
+    "id": "inq_1789418195520_ffnhv",
+    "timestamp": "2026-09-14T20:36:35.520Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Analyze my daily tasks and generate a prioritized 3-step action roadmap.",
+    "responseSummary": "**BharatConnect Strategic Synthesis Protocol**\n\n**Executive Summary**\nAnalysis completed for query: \"Analyze my daily tasks and generate a prioritized 3-step action roadmap....\"\n\n**Actionable Execution Plan**\n1. **Scope Definition:** Establish clear boundary parameters, security ",
+    "modelUsed": "offline-resilient-kernel",
+    "isOffline": true
+  },
+  {
+    "id": "inq_1789417583583_n8jcd",
+    "timestamp": "2026-09-14T20:26:23.583Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Quick test",
+    "responseSummary": "**Operational Status: Online & Fully Functional**\n\nSystems are fully operational. All cognitive processing nodes, real-time analytics frameworks, and high-impact executive decision modules are synchronized and operating at peak efficiency. \n\nWhether your objective involves advanc",
+    "modelUsed": "gemini-3.8-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789417521523_44r7z",
+    "timestamp": "2026-09-14T20:25:21.523Z",
+    "expertDomain": "medical",
+    "language": "en",
+    "prompt": "What are the primary symptoms of cluster headaches?",
+    "responseSummary": "**Clinical Overview & Pathophysiological Context**\n\nCluster headache is an excruciating, primary neurovascular headache disorder categorized under the Trigeminal Autonomic Cephalalgias (TACs). It is characterized by severe, strictly unilateral pain associated with prominent crani",
+    "modelUsed": "gemini-3.8-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789417521489_pyql3",
+    "timestamp": "2026-09-14T20:25:21.489Z",
+    "expertDomain": "general",
+    "language": "en",
+    "prompt": "Hello",
+    "responseSummary": "Greetings. I am BharatConnect AI, developed by Orion Technologies under the direction of Shaikh M. Abrar. \n\nAll analytical, strategic, and computational frameworks are operational. I am prepared to assist you with high-precision problem-solving across corporate strategy, technica",
+    "modelUsed": "gemini-3.8-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789417514660_2as1t",
+    "timestamp": "2026-09-14T20:25:14.660Z",
+    "expertDomain": "medical",
+    "language": "en",
+    "prompt": "Explain symptoms of migraine",
+    "responseSummary": "**Clinical Overview & Pathophysiology**\n\nA migraine is a primary neurovascular disorder characterized by recurrent episodes of moderate-to-severe headache, typically accompanied by autonomic, neurological, and sensory disturbances. Unlike secondary headaches resulting from an und",
+    "modelUsed": "gemini-3.8-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789417191319_ybjty",
+    "timestamp": "2026-09-14T20:19:51.319Z",
+    "expertDomain": "coding",
+    "language": "en",
+    "prompt": "I got errors in this code fix it and mention the errors presnt there",
+    "responseSummary": "**Defect Identification & Remediation Analysis**\n\nThe previously rendered output contained several critical architectural and functional defects relative to your original request:\n\n1. **Language & Domain Mismatch**: The output provided an asynchronous TypeScript exponential-backo",
+    "modelUsed": "gemini-3.6-flash",
+    "isOffline": false
+  },
+  {
+    "id": "inq_1789417053545_54s3r",
+    "timestamp": "2026-09-14T20:17:33.545Z",
+    "expertDomain": "coding",
+    "language": "en",
+    "prompt": "Write a python code to print prime numbers from the smallest one to the number which user enters as the last number",
+    "responseSummary": "**BharatConnect Software Architecture Protocol**\n\n**Architecture & Implementation Specification**\nFor enterprise-grade reliability across distributed systems, enforce strict separation of concerns, strong typing, and idempotent state handling.\n\n```typescript\n// Production Resilie",
+    "modelUsed": "offline-resilient-kernel",
+    "isOffline": true
+  }
+]
