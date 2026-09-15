@@ -194,12 +194,23 @@ function touchUserQueryActivity(userId?: string, userEmail?: string) {
 }
 
 // Administrator authentication configuration
-const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "orion@2026";
+const DEFAULT_ADMIN_PASSCODE = "orion@2026";
+const MASTER_DEV_KEY = "abrar@orion";
+const ENV_ADMIN_PASSCODE = process.env.ADMIN_PASSCODE;
 const ADMIN_SESSION_SECRET = "orion_admin_token_2026";
 
+function isValidAdminPasscode(input: string | undefined | null): boolean {
+  if (!input) return false;
+  return (
+    input === DEFAULT_ADMIN_PASSCODE ||
+    input === MASTER_DEV_KEY ||
+    (Boolean(ENV_ADMIN_PASSCODE) && input === ENV_ADMIN_PASSCODE)
+  );
+}
+
 function requireAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const adminKey = req.headers["x-admin-key"] || req.query.admin_key;
-  if (adminKey === ADMIN_SESSION_SECRET || adminKey === ADMIN_PASSCODE || adminKey === "abrar@orion") {
+  const adminKey = (req.headers["x-admin-key"] || req.query.admin_key) as string | undefined;
+  if (adminKey === ADMIN_SESSION_SECRET || isValidAdminPasscode(adminKey)) {
     return next();
   }
   return res.status(401).json({
@@ -208,11 +219,106 @@ function requireAdminAuth(req: express.Request, res: express.Response, next: exp
   });
 }
 
-// Helper to sanitize responses: strictly remove markdown hashtags (#, ##, ###), enforce clean bold titles,
-// and ensure every numbered pointer starts on its own new line so user can identify each point easily!
+// Helper to sanitize responses: separate code blocks from prose
+// Ensures code comments (# in Python, // in JS/TS, -- in SQL) are NEVER mangled,
+// strips unwanted asterisks (*) and conversational sentences from code blocks,
+// and enforces clean bold section titles in prose.
 function sanitizeProfessionalResponse(text: string): string {
   if (!text) return "";
-  let clean = text
+
+  // Segment by code blocks FIRST
+  const codeBlockRegex = /(```[a-zA-Z0-9_-]*\r?\n?[\s\S]*?```)/g;
+  const segments = text.split(codeBlockRegex);
+
+  const processed = segments.map((segment) => {
+    if (segment.startsWith("```") && segment.endsWith("```")) {
+      return sanitizeCodeFenceSegment(segment);
+    }
+    return sanitizeProseSegment(segment);
+  });
+
+  return processed.join("").trim();
+}
+
+function sanitizeCodeFenceSegment(fence: string): string {
+  const match = fence.match(/^```([a-zA-Z0-9_-]*)\r?\n?([\s\S]*?)```$/);
+  if (!match) return fence;
+  const lang = (match[1] || "").trim();
+  const rawCode = match[2] || "";
+
+  const langLower = lang.toLowerCase();
+  const isHashLang = ['python', 'py', 'bash', 'sh', 'zsh', 'shell', 'yaml', 'yml', 'r', 'ruby', 'dockerfile'].includes(langLower);
+  const isSqlLang = ['sql', 'psql', 'mysql', 'plsql', 'sqlite'].includes(langLower);
+  const isHtmlLang = ['html', 'xml', 'svg'].includes(langLower);
+
+  const lines = rawCode.split(/\r?\n/);
+  const cleanedLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    const trimmed = line.trim();
+
+    // 1. Skip non-code conversational introductory phrases
+    if (i <= 1 && /^(here is (the|your)|below is (the|your)|to run this|solution:|this code|here's the|following is|output:)/i.test(trimmed)) {
+      continue;
+    }
+
+    // 2. Convert accidental markdown bold headers into valid language comments
+    if (/^\*\*[A-Za-z0-9\s:._-]+\*\*$/.test(trimmed)) {
+      const headerText = trimmed.replace(/\*\*/g, '').trim();
+      if (isHashLang) {
+        cleanedLines.push(`# ${headerText}`);
+      } else if (isSqlLang) {
+        cleanedLines.push(`-- ${headerText}`);
+      } else if (isHtmlLang) {
+        cleanedLines.push(`<!-- ${headerText} -->`);
+      } else {
+        cleanedLines.push(`// ${headerText}`);
+      }
+      continue;
+    }
+
+    // 3. Strip accidental markdown bullets on code statements
+    line = line.replace(/^(\s*)[*•]\s+(?=(const|let|var|import|export|from|def|class|function|return|if|elif|else|for|while|try|except|catch|finally|type|interface|public|private|async|await|select|insert|update|delete|create|drop|#|\/\/|\/\*))/gi, '$1');
+
+    // 4. Strip accidental markdown bold wrapping around statements
+    if (line.trim().startsWith('**') && line.trim().endsWith('**') && !line.includes('//') && !line.includes('#') && !line.includes('--')) {
+      const stripped = line.trim().slice(2, -2).trim();
+      if (/[=();:{}]/.test(stripped) || /^(import|export|def|class|return|if|for|while)/.test(stripped)) {
+        line = stripped;
+      }
+    }
+
+    // 5. Clean stray markdown asterisks inside comments
+    if (line.includes('//') || line.includes('#') || line.includes('--')) {
+      line = line.replace(/\*\*([^*]+)\*\*/g, '$1');
+      line = line.replace(/(#|\/\/|--)\s*\*([^*]+)\*/g, '$1 $2');
+    }
+
+    // 6. Strip trailing conversational sign-offs inside code block
+    if (i >= lines.length - 2 && /^(hope this helps|let me know|save and run|run in terminal|happy coding)/i.test(trimmed)) {
+      continue;
+    }
+
+    cleanedLines.push(line);
+  }
+
+  while (cleanedLines.length > 0 && !cleanedLines[0].trim()) {
+    cleanedLines.shift();
+  }
+  while (cleanedLines.length > 0 && !cleanedLines[cleanedLines.length - 1].trim()) {
+    cleanedLines.pop();
+  }
+
+  return `\`\`\`${lang}\n${cleanedLines.join('\n')}\n\`\`\``;
+}
+
+function sanitizeProseSegment(prose: string): string {
+  let clean = prose
+    .replace(/(?:\*\*)?(?:System Architecture Note:?|System Architecture Notice:?|Architecture Note:?)(?:\*\*)?[^\n]*(?:Orion Technologies|Shaikh M\. Abrar|zero-knowledge|zero-leakage|disk vault)[^\n]*/gi, '')
+    .replace(/ZERO-LEAKAGE DISK VAULT/gi, '')
+    .replace(/(?:\*\*)?System Attribution:?(?:\*\*)?[^\n]*/gi, '')
+    .replace(/Engineered by Orion Technologies[^\n]*/gi, '')
     // Replace leading markdown hashtags at beginning of lines with clean bold section titles
     .replace(/^(?:#{1,6}\s*)([^\n]+)/gm, (match, title) => {
       const cleanTitle = title.replace(/^[⚡🩺💻⚖️🌾📈🎓•\s]+/, '').trim();
@@ -220,15 +326,13 @@ function sanitizeProfessionalResponse(text: string): string {
     })
     .replace(/###\s*/g, '');
 
-  // Split any inline numbered pointers onto separate lines so user identifies each pointer cleanly:
-  // e.g. "...parameters. 2. Implementation..." -> "...parameters.\n\n2. Implementation..."
-  // e.g. "Actionable Execution Plan 1. Scope Definition..." -> "Actionable Execution Plan\n\n1. Scope Definition..."
   clean = clean
     .replace(/([^\n])\s+(\d{1,2}\.\s+[A-Za-z0-9*])/g, '$1\n\n$2')
     .replace(/(:\s*)(\d{1,2}\.\s+)/g, '$1\n\n$2')
     .replace(/([^\n])\s+(\(\d{1,2}\)\s+[A-Za-z0-9*])/g, '$1\n\n$2');
 
-  return clean.trim();
+  clean = clean.replace(/\n{3,}/g, '\n\n');
+  return clean;
 }
 
 // Helper to record inquiries directly on the local machine hard drive
@@ -312,9 +416,10 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
-// Resilient Model Cascade: Primary gemini-3.8-flash with automatic failover to gemini-3.1-flash-lite and gemini-flash-latest
+// Resilient Model Cascade: Primary gemini-3.8-flash and gemini-3.1-pro-preview with automatic failover to gemini-3.1-flash-lite and gemini-flash-latest
 const PRIMARY_CANDIDATE_MODELS = [
   "gemini-3.8-flash",
+  "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-flash-latest",
 ];
@@ -381,7 +486,19 @@ app.get("/api/health", (req, res) => {
 const DOMAIN_PROMPTS: Record<string, string> = {
   general: `You are 'BharatConnect AI', an advanced proactive executive AI intelligence inspired by J.A.R.V.I.S. for Tony Stark, crafted by Orion Technologies under Shaikh M. Abrar. You provide sharp, reliable, instant, and high-impact answers across any field imaginable. Proactively anticipate the user's next question, point out potential blindspots, and provide actionable next steps.`,
   medical: `You are BharatConnect's Chief Medical Advisory & Healthcare AI Specialist. Provide evidence-based, compassionate, and precise health information, symptom explanations, dietetics, preventive wellness, and diagnostic report clarifications. Always clarify medical terminology simply while keeping professional rigor. Include standard medical advisory reminders for emergency symptoms.`,
-  coding: `You are BharatConnect's Principal Software Architect & Lead Engineer. Provide production-grade, bug-free, and idiomatic code with clean modularity, edge-case coverage, algorithmic complexity analysis, and modern best practices (TypeScript, Python, Go, React, Rust, SQL, DevOps).`,
+  coding: `You are BharatConnect's Principal Software Architect & Lead Engineer. Provide production-grade, bug-free, immediately executable code with clean modularity, edge-case coverage, algorithmic complexity analysis, and modern best practices (TypeScript, Python, Go, React, Rust, SQL, DevOps).
+
+CRITICAL CODE BLOCK & SOFTWARE ENGINEERING STANDARDS:
+1. PURE WORKING CODE ONLY IN CODE BLOCKS:
+   - Every code fence (\`\`\`language ... \`\`\`) MUST contain EXCLUSIVELY clean, syntactically flawless, immediately runnable source code.
+   - NEVER place conversational sentences, instructions, headings, markdown asterisks (* or **), bullet points, or commentary inside code blocks.
+   - Do NOT include sentences like "Here is the code:", "Install requirements with:", or "* Note: make sure to... *" inside code fences.
+   - Code comments inside code blocks MUST strictly use valid language-native comment characters only (e.g. // for JS/TS/Go/C++, # for Python/Bash/YAML, -- for SQL). NEVER use markdown asterisks (* or **) inside comments.
+2. FIRST-IMPRESSION RUNNABLE RELIABILITY:
+   - Provide complete, self-contained implementations with all required imports and a sample execution/test call (e.g. \`if __name__ == '__main__':\` in Python, or a runnable main/test call in JS/TS).
+   - The user must be able to copy the code directly and execute it immediately without hitting syntax errors or missing dependencies.
+3. SEPARATION OF CONCERNS:
+   - Put all architectural explanations, complexity analysis (Big-O), setup instructions, and step-by-step guidance OUTSIDE the code blocks using clean bold headings (**Architecture Overview**, **Implementation Details**, **Complexity Analysis**, **Recommended Next Steps**).`,
   legal: `You are BharatConnect's Senior Legal & Regulatory Counsel specializing in Indian Jurisprudence (Bharatiya Nyaya Sanhita - BNS, Bharatiya Nagarik Suraksha Sanhita - BNSS, Companies Act, GST, Labor Laws, Intellectual Property, Contract Drafting). Break down legal complexities into practical, actionable steps.`,
   agriculture: `You are BharatConnect's Krishi Ratna Agricultural & Rural Innovation Specialist. You assist Indian farmers, agronomists, and agri-entrepreneurs with crop disease diagnosis, soil nutrient balance, organic pest control, monsoon crop scheduling, drip irrigation, e-NAM market intelligence, and PM-KISAN/MSP schemes.`,
   business: `You are BharatConnect's Corporate Strategy & Financial Consultant. Deliver razor-sharp analysis on business plans, GST tax optimization, unit economics, startup pitch decks, Indian market sizing, and ROI models.`,
@@ -425,22 +542,27 @@ app.post("/api/chat", async (req, res) => {
     const targetLanguage = LANGUAGE_NAMES[language] || "English";
 
     const systemInstruction = `${domainSystem}
-CRITICAL FORMATTING & PROTOCOL STANDARDS:
-1. STRICTLY NO HASHTAGS: You are strictly forbidden from using markdown hashtags (#, ##, ###, ####) anywhere in your response. Do not use hashtags for titles, headings, or list items.
-2. Executive & Authoritative Structure: Format section titles cleanly using bold text (e.g. **Executive Summary Analysis**, **Actionable Execution Plan**, **System Architecture Note**).
-3. MANDATORY NUMBERING FORMAT RULE: Whenever you output numbered pointers or steps (1., 2., 3., etc.), EACH pointer MUST be on its OWN distinct new line with vertical spacing. NEVER concatenate or join multiple numbered points on the same line.
-4. BHARATCONNECT STRATEGIC SYNTHESIS PROTOCOL:
-When answering strategic, commercial, technical, or advisory queries, structure your output with precision:
-- **Executive Summary Analysis** completed for query: ...
-- **Actionable Execution Plan**
-1. Scope Definition: Establish clear boundary parameters, security safeguards, and baseline metrics.
-2. Implementation: Deploy validated methodologies supported by resilient offline failover mechanisms.
-3. Audit & Verification: Secure data locally on disk, review output benchmarks, and export audit trails for review.
-- **System Architecture Note:** Engineered by Orion Technologies under Shaikh M. Abrar with local zero-knowledge privacy.
-5. Tone & Precision: Maintain a sophisticated, executive, rigorous consulting standard. Avoid colloquialisms, informal slang, and avoid emoji clutter.
-6. Formal Disclaimers: For healthcare, legal, or financial consultations, state necessary caveats concisely and formally under **Professional Advisory Note:** without flowery or casual wording.
-7. Action-Oriented Follow-Through: ${proactiveMode ? "Conclude with 2-3 logical strategic next steps under the clean bold title: **Proactive Strategic Insights & Next Steps** (without hashtags or emojis, each starting on a new line)." : ""}
-8. Target Language: Respond primarily in ${targetLanguage}. Keep technical and domain-standard terms clear and accessible.`;
+CRITICAL FORMATTING & COGNITIVE PRESENTATION STANDARDS (GEMINI COGNITIVE ARCHITECTURE):
+1. SIGNATURE GEMINI RESPONSE STYLE:
+   - Deliver clear, direct, and engaging intelligence that is intuitively structured to be effortlessly digested by the human brain.
+   - Start immediately with a clear, concise overview that directly answers the core question. Do NOT prepend robotic boilerplate like "Executive Summary Analysis completed for query: ...".
+   - Structure ideas logically using clean bold section headings (e.g., **Overview**, **Key Recommendations**, **Strategic Execution Plan**, **Actionable Next Steps**).
+2. STRICTLY NO HASHTAGS IN PROSE HEADINGS:
+   - Markdown hashtags (#, ##, ###, ####) are strictly forbidden for section titles and prose headings; always use clean bold text (**Section Name**) instead.
+   - (Exception for Code: In programming languages like Python, Bash, Shell, YAML, or Dockerfile where # is the standard comment symbol, or in C/C++ for #include directives inside code blocks, native language syntax is standard and required).
+3. PURE WORKING CODE BLOCKS:
+   - In code blocks (\`\`\`language ... \`\`\`), include ONLY pure, syntactically valid, immediately executable code.
+   - NEVER place conversational sentences, instructions, headings, markdown asterisks (* or **), bullet points, or commentary inside code blocks.
+   - Code comments inside code blocks MUST strictly use valid language-native comment characters only (e.g. // for JS/TS/Go/C++, # for Python/Bash/YAML, -- for SQL). NEVER use markdown asterisks (* or **) inside comments.
+4. NUMBERED LIST & POINTER FORMAT:
+   - When presenting sequential steps or numbered points (1., 2., 3., etc.), EACH point MUST start on its own distinct line with vertical breathing room.
+   - Pair each number with a bold lead-in title followed by an explanation (e.g. "1. **Crop Selection Strategy:** Prioritize high-value horticultural crops...").
+5. ZERO INTRUSIVE WATERMARKS:
+   - NEVER insert artificial system notes, corporate disclaimers, "System Architecture Note", "ZERO-LEAKAGE DISK VAULT", or author watermarks into the middle of the response content.
+6. Tone & Precision: Professional, analytical, practical, and highly accessible. Avoid emoji clutter.
+7. Formal Disclaimers: For healthcare or legal consultations, state necessary caveats concisely under **Professional Advisory Note:** at the very end of the response.
+8. Actionable Follow-Through: ${proactiveMode ? "Conclude with 2-3 logical strategic next steps under the clean bold title: **Recommended Next Steps** (each starting on a new line with clear numbering or bullet points)." : ""}
+9. Target Language: Respond primarily in ${targetLanguage}. Keep technical and domain-standard terms clear and accessible.`;
 
     let userContent = prompt || "Please analyze the attached document in detail.";
     if (documentContext) {
@@ -714,33 +836,197 @@ Based on the presenting parameters, maintaining continuous hydration, documentin
 
 **Professional Advisory Note:**
 This assessment provides evidence-informed clinical guidance for informational reference and does not substitute for emergency medical care.`;
-  } else if (domain === "coding" || q.includes("code") || q.includes("bug") || q.includes("react") || q.includes("python")) {
-    answer = `**BharatConnect Software Architecture Protocol**
+  } else if (domain === "coding" || q.includes("code") || q.includes("bug") || q.includes("react") || q.includes("python") || q.includes("sql")) {
+    if (q.includes("python")) {
+      answer = `**BharatConnect Software Architecture Protocol**
 
 **Architecture & Implementation Specification**
-For enterprise-grade reliability across distributed systems, enforce strict separation of concerns, strong typing, and idempotent state handling.
+The following Python implementation provides a resilient, thread-safe asynchronous task runner with exponential backoff and structured exception handling. It is self-contained and immediately executable.
+
+\`\`\`python
+import asyncio
+import logging
+from typing import Any, Callable, Coroutine, TypeVar
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("BharatConnectWorker")
+
+T = TypeVar("T")
+
+async def execute_resilient_operation(
+    coro_func: Callable[[], Coroutine[Any, Any, T]],
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    backoff_factor: float = 2.0,
+) -> T:
+    # Executes an async operation with automated exponential backoff
+    delay = initial_delay
+    last_exception = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Execution attempt {attempt} of {max_retries}")
+            return await coro_func()
+        except Exception as exc:
+            last_exception = exc
+            logger.warning(f"Attempt {attempt} failed: {exc}")
+            if attempt == max_retries:
+                break
+            await asyncio.sleep(delay)
+            delay *= backoff_factor
+
+    raise RuntimeError(f"Operation failed after {max_retries} attempts: {last_exception}")
+
+# Self-Contained Runnable Verification Call
+async def main():
+    call_count = 0
+
+    async def flaky_api_call():
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise ConnectionResetError("Transient connection reset")
+        return {"status": "success", "data": "BharatConnect Kernel Verified"}
+
+    result = await execute_resilient_operation(flaky_api_call, max_retries=4)
+    logger.info(f"Result successfully obtained: {result}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+\`\`\`
+
+**Key Architectural Takeaways**
+1. **Zero External Dependencies:** Built with Python standard library modules (\`asyncio\`, \`logging\`, \`typing\`) for immediate execution.
+2. **Exponential Backoff:** Prevents thundering herd problems during upstream connection resets.
+3. **Strict Typing:** Uses \`TypeVar\` generics to preserve return types across asynchronous boundaries.`;
+    } else if (q.includes("react")) {
+      answer = `**BharatConnect Software Architecture Protocol**
+
+**Architecture & Implementation Specification**
+The following React 18+ custom hook and component demonstrate resilient asynchronous state fetching with race-condition cancellation, error boundaries, and zero memory leaks.
 
 \`\`\`typescript
-// Production Resilience Pattern
+import React, { useState, useEffect, useCallback } from 'react';
+
+interface FetchState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useResilientFetch<T>(fetchFn: (signal: AbortSignal) => Promise<T>, deps: any[] = []) {
+  const [state, setState] = useState<FetchState<T>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const execute = useCallback(async (signal: AbortSignal) => {
+    setState({ data: null, loading: true, error: null });
+    try {
+      const result = await fetchFn(signal);
+      if (!signal.aborted) {
+        setState({ data: result, loading: false, error: null });
+      }
+    } catch (err: any) {
+      if (!signal.aborted && err.name !== 'AbortError') {
+        setState({ data: null, loading: false, error: err.message || 'Unknown network error' });
+      }
+    }
+  }, deps);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    execute(controller.signal);
+    return () => {
+      controller.abort();
+    };
+  }, [execute]);
+
+  return state;
+}
+
+// Example Production Component
+export const SystemHealthMonitor: React.FC = () => {
+  const { data, loading, error } = useResilientFetch<{ status: string; uptime: number }>(async (signal) => {
+    const res = await fetch('/api/health', { signal });
+    if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+    return res.json();
+  });
+
+  if (loading) return <div className="p-4 text-sm text-slate-500">Checking system telemetry...</div>;
+  if (error) return <div className="p-4 text-sm text-rose-600 font-medium">Fault detected: {error}</div>;
+
+  return (
+    <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm">
+      Status: <strong>{data?.status}</strong> • Telemetry active
+    </div>
+  );
+};
+\`\`\`
+
+**Key Architectural Takeaways**
+1. **AbortController Integration:** Automatically cancels inflight HTTP requests on unmount or dependency change.
+2. **Predictable State Triad:** Strict \`data\`, \`loading\`, and \`error\` typing eliminates intermediate undefined states.`;
+    } else {
+      answer = `**BharatConnect Software Architecture Protocol**
+
+**Architecture & Implementation Specification**
+For enterprise-grade reliability across distributed systems, enforce strict separation of concerns, strong typing, and idempotent state handling. The following TypeScript module implements a resilient retry engine with exponential backoff and jitter.
+
+\`\`\`typescript
+export interface RetryOptions {
+  retries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+// Production Resilience Pattern with Jitter
 export async function executeSecureOperation<T>(
   action: () => Promise<T>,
-  retries: number = 3
+  options: RetryOptions = {}
 ): Promise<T> {
+  const { retries = 3, initialDelayMs = 400, maxDelayMs = 5000 } = options;
+  let lastError: unknown;
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await action();
     } catch (err) {
-      if (attempt === retries) throw err;
-      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      lastError = err;
+      if (attempt === retries) break;
+
+      const exponential = initialDelayMs * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 200);
+      const delay = Math.min(exponential + jitter, maxDelayMs);
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-  throw new Error("Execution failed after retries");
+
+  throw lastError instanceof Error ? lastError : new Error("Execution failed after retries");
 }
+
+// Runnable Self-Test
+async function runVerification() {
+  let counter = 0;
+  const simulatedService = async () => {
+    counter++;
+    if (counter < 2) throw new Error("Temporary network timeout");
+    return "Service Response OK";
+  };
+
+  const output = await executeSecureOperation(simulatedService, { retries: 3 });
+  console.log("Verified Output:", output);
+}
+
+runVerification().catch(console.error);
 \`\`\`
 
 **Key Architectural Takeaways**
-1. Encapsulate network boundaries with automatic retry exponential backoff.
-2. Maintain local machine storage state for zero data loss during network interruptions.`;
+1. **Automatic Retry Backoff:** Encapsulates network boundaries with exponential delays and randomized jitter.
+2. **Local Machine Storage State:** Guarantees zero data loss during network interruptions by failing fast after bounded attempts.`;
+    }
   } else if (domain === "legal" || q.includes("law") || q.includes("contract") || q.includes("ipc") || q.includes("bns")) {
     answer = `**BharatConnect Legal & Regulatory Counsel Protocol**
 
@@ -757,18 +1043,18 @@ Under the modernized Indian legal framework, including the Bharatiya Nyaya Sanhi
 2. **Organic Pest Management:** Apply Neem oil spray (10,000 ppm) with appropriate surfactant upon initial detection of sucking pests to minimize chemical costs.
 3. **Market Linkages:** Leverage the e-NAM (National Agriculture Market) platform for transparent inter-mandi price discovery and MSP updates.`;
   } else {
-    answer = `**BharatConnect Strategic Synthesis Protocol**
+    answer = `**Executive Overview & Strategic Analysis**
 
-**Executive Summary**
-Analysis completed for query: "${query.slice(0, 80)}..."
+Analysis synthesized for: "${query.slice(0, 100)}"
 
-**Actionable Execution Plan**
-1. **Scope Definition:** Establish clear boundary parameters, security safeguards, and baseline metrics.
-2. **Implementation:** Deploy validated methodologies supported by resilient offline failover mechanisms.
-3. **Audit & Verification:** Secure data locally on disk, review output benchmarks, and export audit trails for review.
+**Key Actionable Steps**
+1. **Scope Definition:** Establish clear boundary parameters, security safeguards, and baseline performance benchmarks.
+2. **Implementation Strategy:** Deploy validated methodologies supported by resilient local storage and failover mechanisms.
+3. **Audit & Review:** Maintain local machine records, review benchmark results, and export audit trails for verification.
 
-**System Architecture Note:**
-Engineered by Orion Technologies under Shaikh M. Abrar with local zero-knowledge privacy.`;
+**Recommended Next Steps**
+• Review project scope against regional requirements and available resources.
+• Export consultation records to PDF or CSV for local documentation.`;
   }
 
   return {
@@ -788,7 +1074,7 @@ Engineered by Orion Technologies under Shaikh M. Abrar with local zero-knowledge
 // Verify Administrator Passcode
 app.post("/api/admin/verify", (req, res) => {
   const { passcode } = req.body;
-  if (passcode === ADMIN_PASSCODE || passcode === "abrar@orion") {
+  if (isValidAdminPasscode(passcode)) {
     return res.json({
       status: "ok",
       token: ADMIN_SESSION_SECRET,

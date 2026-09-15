@@ -555,6 +555,7 @@ export default function App() {
 // Client-side offline intelligence fallback generator with zero hashtags and professional clinical structure
 function getOfflineLocalAnswer(query: string, domain: ExpertDomainId, language: LanguageCode) {
   const isHindi = language === 'hi';
+  const q = (query || '').toLowerCase();
 
   if (domain === 'medical') {
     return {
@@ -589,7 +590,78 @@ Medical Advisory Disclaimer: A severe, newly onset, or nocturnal headache (heada
     };
   }
 
-  if (domain === 'coding') {
+  if (domain === 'coding' || q.includes('code') || q.includes('python') || q.includes('react') || q.includes('sql') || q.includes('bug')) {
+    if (q.includes('python')) {
+      return {
+        text: `**BharatConnect Software Architecture Protocol [Offline Local Mode]**
+
+**Architecture & Implementation Specification:**
+The following Python script implements a self-contained, thread-safe asynchronous task runner with exponential backoff. It is immediately executable with standard Python libraries.
+
+\`\`\`python
+import asyncio
+import logging
+from typing import Any, Callable, Coroutine, TypeVar
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("BharatConnectWorker")
+
+T = TypeVar("T")
+
+async def execute_resilient_operation(
+    coro_func: Callable[[], Coroutine[Any, Any, T]],
+    max_retries: int = 3,
+    initial_delay: float = 0.5,
+    backoff_factor: float = 2.0,
+) -> T:
+    # Executes an async operation with automated exponential backoff
+    delay = initial_delay
+    last_exception = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Execution attempt {attempt} of {max_retries}")
+            return await coro_func()
+        except Exception as exc:
+            last_exception = exc
+            logger.warning(f"Attempt {attempt} failed: {exc}")
+            if attempt == max_retries:
+                break
+            await asyncio.sleep(delay)
+            delay *= backoff_factor
+
+    raise RuntimeError(f"Operation failed after {max_retries} attempts: {last_exception}")
+
+# Self-Contained Runnable Verification Call
+async def main():
+    call_count = 0
+
+    async def flaky_api_call():
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise ConnectionResetError("Transient connection reset")
+        return {"status": "success", "data": "BharatConnect Local Kernel Verified"}
+
+    result = await execute_resilient_operation(flaky_api_call, max_retries=4)
+    logger.info(f"Result successfully obtained: {result}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+\`\`\`
+
+**Key Architectural Takeaways:**
+1. **Zero External Dependencies:** Uses Python standard library modules (\`asyncio\`, \`logging\`, \`typing\`) for immediate execution.
+2. **Exponential Backoff:** Prevents network congestion during upstream connection resets.
+3. **Strict Typing:** Uses \`TypeVar\` generics to preserve return types across asynchronous boundaries.`,
+        suggestions: [
+          "Explain async exception propagation in Python",
+          "Add circuit breaker pattern implementation",
+        ],
+        actionItems: ["Offline verified", "Syntax validated"],
+      };
+    }
+
     return {
       text: `**BharatConnect Software Architecture Protocol [Offline Local Mode]**
 
@@ -597,20 +669,52 @@ Medical Advisory Disclaimer: A severe, newly onset, or nocturnal headache (heada
 For production reliability across distributed systems, adhere to strict typing, error boundaries, and resilient state synchronization:
 
 \`\`\`typescript
-// Safe Local Hard Drive Storage Synchronization
-export function syncLocalRecord<T>(key: string, data: T): boolean {
-  try {
-    localStorage.setItem(key, JSON.stringify({
-      payload: data,
-      cachedAt: new Date().toISOString(),
-      verified: true,
-    }));
-    return true;
-  } catch (err) {
-    console.error('Local sync failed:', err);
-    return false;
-  }
+export interface RetryOptions {
+  retries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
 }
+
+// Production Resilience Pattern with Jitter
+export async function executeSecureOperation<T>(
+  action: () => Promise<T>,
+  options: RetryOptions = {}
+): Promise<T> {
+  const { retries = 3, initialDelayMs = 400, maxDelayMs = 5000 } = options;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await action();
+    } catch (err) {
+      lastError = err;
+      if (attempt === retries) break;
+
+      const exponential = initialDelayMs * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 200);
+      const delay = Math.min(exponential + jitter, maxDelayMs);
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Execution failed after retries");
+}
+
+// Runnable Self-Test
+async function runVerification() {
+  let counter = 0;
+  const simulatedService = async () => {
+    counter++;
+    if (counter < 2) throw new Error("Temporary network timeout");
+    return "Service Response OK";
+  };
+
+  const output = await executeSecureOperation(simulatedService, { retries: 3 });
+  console.log("Verified Output:", output);
+}
+
+runVerification().catch(console.error);
 \`\`\`
 
 **Key Architectural Takeaways:**
@@ -651,25 +755,20 @@ export function syncLocalRecord<T>(key: string, data: T): boolean {
     text: isHindi
       ? `**भारतकनेक्ट कार्यकारी परामर्श [ऑफ़लाइन मोड]**
 
-**कार्यकारी सारांश:**
+**मुख्य विश्लेषण:**
 आपके प्रश्न का विश्लेषण स्थानीय ऑफ़लाइन इंजन द्वारा किया गया है।
 
-1. **रणनीतिक दृष्टिकोण:** किसी भी जटिल कार्य को सुगम बनाने के लिए उसे ३ स्पष्ट चरणों में विभाजित करें।
-2. **डेटा सुरक्षा:** आपका डेटा कंप्यूटर की हार्ड डिस्क पर सुरक्षित रूप से संगृहीत है और इसे कभी भी पीडीएफ या सीएसवी में निर्यात किया जा सकता है।
+1. **रणनीतिक दृष्टिकोण:** किसी भी कार्य को सुगम बनाने के लिए उसे स्पष्ट चरणों में विभाजित करें।
+2. **डेटा सुरक्षा:** आपका डेटा कंप्यूटर की हार्ड डिस्क पर सुरक्षित रूप से संगृहीत है।
+3. **अगले कदम:** आवश्यकतानुसार पीडीएफ या सीएसवी में निर्यात करें।`
+      : `**Executive Advisory Protocol [Offline Local Mode]**
 
-**सिस्टम जानकारी:**
-ओरियन टेक्नोलॉजीज (शेख एम. अबरार) द्वारा विकसित।`
-      : `**BharatConnect Executive Advisory Protocol [Offline Local Mode]**
+**Overview & Assessment:**
+Your inquiry has been synthesized via the resilient local offline engine.
 
-**Executive Synthesis:**
-Your inquiry has been indexed and answered via the resilient local offline engine.
-
-1. **Strategic Assessment:** Prioritize execution into 3 actionable milestones with defined boundaries and performance benchmarks.
+1. **Strategic Assessment:** Prioritize execution into actionable milestones with defined boundaries and performance benchmarks.
 2. **Data Continuity:** Inquiries are stored directly on your machine's physical disk with zero cloud data leakage.
-3. **Reporting & Auditing:** Export consultation records in CSV or PDF formats at any time.
-
-**System Attribution:**
-Engineered by Orion Technologies • Shaikh M. Abrar with local zero-knowledge privacy.`,
+3. **Reporting & Auditing:** Export consultation records in CSV or PDF formats at any time for local review.`,
     suggestions: [
       isHindi ? "इस समाधान का ३-बिंदु सारांश बनाएं" : "Synthesize into a 3-bullet executive briefing",
       isHindi ? "दस्तावेज़ की समीक्षा करें" : "Review attached document data",

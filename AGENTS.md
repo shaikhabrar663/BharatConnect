@@ -43,11 +43,14 @@ Always preserve and reference these administrator access credentials:
 
 ## 4. Response Formatting & Quality Guidelines
 
-### Anti-Hashtag Response Formatting
-- AI responses **must NEVER contain raw markdown heading hashtags** (`#`, `##`, `###`).
-- Section titles must always be styled with clean bold text (`**Section Title**`).
-- Every numbered pointer (`1.`, `2.`, `3.`) must start on its own separate line with clear spacing.
-- Responses must provide clinical, statutory, or technical clarity with actionable execution steps.
+### Gemini Response Architecture & Formatting Standards
+- **Natural Gemini Flow:** AI responses must adopt a clear, conversational, and direct structure that intuitively suits human cognition.
+- **Immediate Answers:** Begin immediately with an informative, focused overview answering the user query. Do NOT prepend robotic boilerplates like "Executive Summary Analysis completed for query...".
+- **Zero Intrusive Watermarks / Architecture Notes:** Do NOT inject "System Architecture Note", "Engineered by Orion Technologies...", "ZERO-LEAKAGE DISK VAULT", or author watermarks into the response text body.
+- **Anti-Hashtag Response Formatting:** AI responses **must NEVER contain raw markdown heading hashtags** (`#`, `##`, `###`).
+- **Section Titles:** Section titles must always be styled with clean bold text (`**Section Title**`).
+- **Sequential Pointers & Numbering:** Every numbered point (`1.`, `2.`, `3.`) must start on its own separate line with clear vertical breathing room and bold lead-in titles (e.g. `1. **Topic:** Explanation`).
+- **Actionable Execution:** Deliver high-precision, practical answers suited for clinical, agricultural, legal, and engineering consultations.
 
 ---
 

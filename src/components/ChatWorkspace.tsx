@@ -12,7 +12,6 @@ import {
   Trash2, 
   ShieldCheck, 
   Sparkles, 
-  Bot, 
   User, 
   Paperclip, 
   X, 
@@ -21,8 +20,12 @@ import {
   Clock,
   ArrowRight,
   Plus,
-  RefreshCw,
-  SlidersHorizontal
+  ThumbsUp,
+  ThumbsDown,
+  Wheat,
+  Stethoscope,
+  Code2,
+  Scale
 } from 'lucide-react';
 import { 
   ChatMessage, 
@@ -35,6 +38,23 @@ import { EXPERT_PROFILES } from '../data/expertDomains';
 import { copyToClipboard, exportToPDF, exportToCSV } from '../utils/exportUtils';
 import { createSpeechRecognizer, speakText, stopSpeaking, isSpeechRecognitionSupported } from '../utils/speech';
 import { FormattedResponse } from './FormattedResponse';
+
+// Iconic 4-pointed Gemini Star Sparkle SVG
+const GeminiSparkleIcon: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) => (
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <path
+      d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z"
+      fill="url(#gemini_grad)"
+    />
+    <defs>
+      <linearGradient id="gemini_grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#2563EB" />
+        <stop offset="0.45" stopColor="#7C3AED" />
+        <stop offset="1" stopColor="#EA580C" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
 
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
@@ -73,16 +93,127 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
   const [isListening, setIsListening] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, 'up' | 'down'>>({});
+  const [userFirstName, setUserFirstName] = useState<string>('');
+  
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const prevMessagesLengthRef = useRef<number>(messages.length);
+  const prevLoadingRef = useRef<boolean>(isLoading);
+  const prevDomainRef = useRef<ExpertDomainId>(selectedDomain);
   const recognitionRef = useRef<any>(null);
 
   const t = UI_TRANSLATIONS[language] || UI_TRANSLATIONS.en;
   const currentExpert = EXPERT_PROFILES.find(e => e.id === selectedDomain) || EXPERT_PROFILES[0];
 
-  // Auto-scroll to bottom of conversation
+  // Retrieve user's first name for Gemini-style personalized greeting
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+    try {
+      const raw = localStorage.getItem('bharatconnect_active_user_v1');
+      if (raw) {
+        const u = JSON.parse(raw);
+        if (u?.fullName) {
+          setUserFirstName(u.fullName.split(' ')[0]);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  // Intelligent internal auto-scroll that never disturbs window / outer page scroll
+  // When a response is generated, it aligns the viewport to the start of the exchange
+  // (user question + top of AI answer) so the user reads naturally without the page
+  // jumping, flipping upside down, or slamming to the bottom of the long message.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const prevLength = prevMessagesLengthRef.current;
+    const currentLength = messages.length;
+    const wasLoading = prevLoadingRef.current;
+    const prevDomain = prevDomainRef.current;
+
+    prevMessagesLengthRef.current = currentLength;
+    prevLoadingRef.current = isLoading;
+    prevDomainRef.current = selectedDomain;
+
+    // 1. Domain switched: instant reposition without jarring smooth animation
+    if (selectedDomain !== prevDomain) {
+      container.scrollTop = currentLength > 0 ? container.scrollHeight : 0;
+      return;
+    }
+
+    // 2. Chat cleared or empty: reset to top
+    if (currentLength === 0) {
+      container.scrollTop = 0;
+      return;
+    }
+
+    // 3. Initial load of existing conversation
+    if (prevLength === 0 && currentLength > 0) {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+
+    // 4. New message added
+    if (currentLength > prevLength) {
+      const lastMsg = messages[currentLength - 1];
+
+      if (lastMsg.role === 'user') {
+        // User sent a message: smoothly scroll container to reveal prompt and thinking animation
+        requestAnimationFrame(() => {
+          if (!messagesContainerRef.current) return;
+          messagesContainerRef.current.scrollTo({
+            top: messagesContainerRef.current.scrollHeight,
+            behavior: 'smooth',
+          });
+        });
+        return;
+      }
+
+      if (lastMsg.role === 'assistant') {
+        // Assistant response arrived!
+        // Position at the start of this exchange so the user can immediately read
+        // from the top without the viewport slamming to the bottom or moving the page.
+        requestAnimationFrame(() => {
+          if (!messagesContainerRef.current) return;
+          const userMsg = currentLength >= 2 ? messages[currentLength - 2] : null;
+          const targetEl =
+            (userMsg ? document.getElementById(`chat-msg-${userMsg.id}`) : null) ||
+            document.getElementById(`chat-msg-${lastMsg.id}`);
+
+          if (targetEl) {
+            const containerRect = messagesContainerRef.current.getBoundingClientRect();
+            const targetRect = targetEl.getBoundingClientRect();
+            const targetScrollTop =
+              messagesContainerRef.current.scrollTop + (targetRect.top - containerRect.top) - 16;
+
+            messagesContainerRef.current.scrollTo({
+              top: Math.max(0, targetScrollTop),
+              behavior: 'smooth',
+            });
+          } else {
+            messagesContainerRef.current.scrollTo({
+              top: messagesContainerRef.current.scrollHeight,
+              behavior: 'smooth',
+            });
+          }
+        });
+        return;
+      }
+    }
+
+    // 5. Loading turned on (thinking animation appeared)
+    if (isLoading && !wasLoading) {
+      requestAnimationFrame(() => {
+        if (!messagesContainerRef.current) return;
+        messagesContainerRef.current.scrollTo({
+          top: messagesContainerRef.current.scrollHeight,
+          behavior: 'smooth',
+        });
+      });
+    }
+  }, [messages, isLoading, selectedDomain]);
 
   // Auto-reset clear confirmation after 4 seconds
   useEffect(() => {
@@ -118,6 +249,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     }
+  };
+
+  const handleFeedback = (id: string, type: 'up' | 'down') => {
+    setFeedbackMap(prev => ({
+      ...prev,
+      [id]: prev[id] === type ? (null as any) : type,
+    }));
   };
 
   const handleSpeak = (id: string, text: string) => {
@@ -179,26 +317,59 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
     }
   };
 
+  // Curated prompts for Gemini empty state
+  const quickPrompts = [
+    {
+      icon: Wheat,
+      iconColor: 'text-emerald-600',
+      title: 'Agronomic Profitability',
+      desc: 'Crop selection & water management for Ajanta, Maharashtra',
+      prompt: 'Agronomic suitability and profitability optimization for the Ajanta region, Maharashtra.',
+    },
+    {
+      icon: Stethoscope,
+      iconColor: 'text-blue-600',
+      title: 'Clinical Advisory',
+      desc: 'Interpret symptoms & lab metrics with clinical precision',
+      prompt: 'What are the clinical red-flag symptoms and evidence-based protocols for sudden nocturnal headaches?',
+    },
+    {
+      icon: Code2,
+      iconColor: 'text-indigo-600',
+      title: 'Code Architecture',
+      desc: 'Resilient TypeScript, React state & offline disk persistence',
+      prompt: 'Show me an idiomatic TypeScript architecture for resilient offline failover with local storage caching.',
+    },
+    {
+      icon: Scale,
+      iconColor: 'text-amber-600',
+      title: 'Legal Counsel (BNS)',
+      desc: 'Indian contract drafting & statutory dispute resolution',
+      prompt: 'What are the essential elements of a commercial contract and dispute arbitration clause under Indian law?',
+    },
+  ];
+
   return (
-    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-[650px] shadow-sm">
+    <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden flex flex-col h-[700px] shadow-sm">
       {/* Workspace Subheader / Actions Bar */}
-      <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+      <div className="px-4 sm:px-6 py-3 border-b border-slate-200/80 bg-white/95 backdrop-blur-xs flex flex-wrap items-center justify-between gap-3">
         {/* Left: Active Expert Info & State */}
         <div className="flex items-center gap-2.5">
-          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold border ${currentExpert.badgeColor}`}>
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800">
+            <GeminiSparkleIcon className="w-3.5 h-3.5" />
             <span>{currentExpert.name}</span>
-          </span>
+          </div>
 
-          <span className="text-slate-300">|</span>
+          <span className="text-slate-300 hidden sm:inline">|</span>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+          <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             <span>{messages.length} exchanges</span>
           </div>
 
           {/* Auto New Chat on Expert Toggle setting */}
           <label 
-            className="hidden lg:flex items-center gap-1.5 text-[11px] text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-colors shadow-2xs"
+            className="hidden md:flex items-center gap-1.5 text-[11px] text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-md cursor-pointer transition-colors"
             title="When switching between experts, automatically initialize a fresh new consultation"
           >
             <input
@@ -207,7 +378,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               onChange={(e) => setAutoStartNewChatOnSwitch(e.target.checked)}
               className="w-3 h-3 text-orange-600 rounded cursor-pointer accent-orange-600"
             />
-            <span className="font-semibold text-slate-700">Auto-New Chat on Switch</span>
+            <span className="font-medium text-slate-700">Auto-New on Switch</span>
           </label>
         </div>
 
@@ -217,8 +388,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           <button
             id="workspace-new-chat-btn"
             onClick={onNewChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-            title="Start a fresh, clean chat session with this expert"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition-all shadow-xs cursor-pointer"
+            title="Start a fresh conversation"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Chat</span>
@@ -228,7 +399,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             <>
               <button
                 onClick={() => exportToCSV(messages)}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 border border-slate-300 rounded-md cursor-pointer transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer transition-colors"
                 title="Export session log to CSV"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -236,8 +407,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
               </button>
 
               {confirmingClear ? (
-                <div className="flex items-center gap-1 bg-rose-50 border border-rose-300 rounded-md p-0.5 animate-fadeIn">
-                  <span className="text-[11px] font-bold text-rose-700 px-1">Clear chat?</span>
+                <div className="flex items-center gap-1 bg-rose-50 border border-rose-300 rounded-lg p-0.5 animate-fadeIn">
+                  <span className="text-[11px] font-medium text-rose-700 px-1">Clear chat?</span>
                   <button
                     id="confirm-clear-yes-btn"
                     type="button"
@@ -246,7 +417,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                       setConfirmingClear(false);
                     }}
                     className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shadow-2xs"
-                    title="Confirm clear active consultation"
                   >
                     Yes
                   </button>
@@ -255,7 +425,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                     type="button"
                     onClick={() => setConfirmingClear(false)}
                     className="px-1.5 py-0.5 text-slate-500 hover:text-slate-800 text-[11px] font-semibold cursor-pointer"
-                    title="Cancel"
                   >
                     Cancel
                   </button>
@@ -265,8 +434,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
                   id="chat-clear-btn"
                   type="button"
                   onClick={() => setConfirmingClear(true)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-md cursor-pointer transition-colors"
-                  title="Clear current session"
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-lg cursor-pointer transition-colors"
+                  title="Clear conversation"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Clear</span>
@@ -275,170 +444,189 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             </>
           )}
 
-          <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-md">
+          <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-1 rounded-md">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>AES-256</span>
+            <span className="hidden sm:inline">Encrypted</span>
           </div>
         </div>
       </div>
 
-      {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-slate-50/50">
+      {/* Messages Scroll Area — Gemini Flow Canvas */}
+      <div 
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 space-y-7 bg-white"
+      >
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 max-w-md mx-auto">
-            <div className="w-14 h-14 rounded-2xl bg-orange-100 border border-orange-200 flex items-center justify-center text-orange-600 mb-4">
-              <Sparkles className="w-7 h-7" />
+          <div className="h-full flex flex-col justify-center max-w-2xl mx-auto py-6">
+            {/* Gemini Greeting Header */}
+            <div className="mb-8">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-500 via-purple-500 to-orange-400 p-0.5 flex items-center justify-center mb-4 shadow-sm">
+                <div className="w-full h-full bg-white rounded-[10px] flex items-center justify-center">
+                  <GeminiSparkleIcon className="w-6 h-6" />
+                </div>
+              </div>
+              <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-2">
+                <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-orange-500 bg-clip-text text-transparent">
+                  Hello, {userFirstName || 'there'}
+                </span>
+              </h2>
+              <p className="text-lg sm:text-xl text-slate-500 font-normal">
+                How can I help you today?
+              </p>
             </div>
-            <h3 className="text-base font-bold text-slate-900 mb-1">
-              BharatConnect AI Expert Ready
-            </h3>
-            <p className="text-xs text-slate-600 leading-relaxed mb-4">
-              Ask any complex question, tap the microphone to speak in your language, or attach documents (PDF, Word, Excel) for real-time analysis.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <button
-                onClick={onOpenDocModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer shadow-xs"
-              >
-                <Paperclip className="w-3.5 h-3.5 text-orange-600" />
-                <span>Upload Document</span>
-              </button>
-              <button
-                onClick={handleVoiceToggle}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer shadow-xs"
-              >
-                <Mic className="w-3.5 h-3.5 text-blue-600" />
-                <span>Try Voice Question</span>
-              </button>
+
+            {/* Gemini Quick Prompt Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+              {quickPrompts.map((item, idx) => {
+                const IconComponent = item.icon;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => onSendMessage(item.prompt)}
+                    className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50/70 transition-all text-left flex flex-col justify-between group cursor-pointer shadow-2xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-semibold text-slate-800">{item.title}</span>
+                        <IconComponent className={`w-4 h-4 ${item.iconColor}`} />
+                      </div>
+                      <p className="text-[12.5px] text-slate-500 leading-snug line-clamp-2">
+                        {item.desc}
+                      </p>
+                    </div>
+                    <div className="mt-3 flex items-center gap-1 text-[11px] font-medium text-slate-400 group-hover:text-blue-600 transition-colors">
+                      <span>Explore topic</span>
+                      <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : (
           messages.map((msg) => {
             const isUser = msg.role === 'user';
+            const feedback = feedbackMap[msg.id];
+
+            if (isUser) {
+              // User Message: Sleek right-aligned pill bubble (Gemini Style)
+              return (
+                <div key={msg.id} id={`chat-msg-${msg.id}`} className="flex flex-col items-end max-w-3xl ml-auto">
+                  <div className="rounded-3xl bg-slate-100 text-slate-900 border border-slate-200/90 px-5 py-3 text-[14.5px] max-w-[85%] sm:max-w-[78%] shadow-2xs">
+                    {msg.documentAttachment && (
+                      <div className="mb-2 p-2 rounded-lg bg-slate-200/80 text-slate-800 flex items-center gap-2 text-xs">
+                        <FileText className="w-4 h-4 text-orange-600 shrink-0" />
+                        <span className="font-medium truncate">{msg.documentAttachment.name}</span>
+                      </div>
+                    )}
+                    <FormattedResponse content={msg.content} isUser={true} />
+                  </div>
+                  <span className="text-[11px] text-slate-400 mt-1 px-3">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              );
+            }
+
+            // Assistant Message: Open canvas flow with Gemini Sparkle (Gemini Style)
             return (
-              <div
-                key={msg.id}
-                className={`flex gap-3 max-w-3xl ${isUser ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
-              >
-                {/* Avatar */}
-                <div
-                  className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center border text-xs font-bold ${
-                    isUser
-                      ? 'bg-slate-900 border-slate-800 text-white'
-                      : 'bg-white border-slate-200 text-orange-600 shadow-xs'
-                  }`}
-                >
-                  {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-orange-600" />}
+              <div key={msg.id} id={`chat-msg-${msg.id}`} className="flex items-start gap-3.5 sm:gap-4 max-w-3xl mr-auto">
+                {/* Gemini Icon */}
+                <div className="w-7 h-7 rounded-full bg-slate-50 border border-slate-200/80 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                  <GeminiSparkleIcon className="w-4 h-4" />
                 </div>
 
-                {/* Message Body */}
-                <div className={`space-y-1.5 max-w-[85%] sm:max-w-[90%]`}>
-                  <div
-                    className={`rounded-xl p-4 border text-sm leading-relaxed ${
-                      isUser
-                        ? 'bg-slate-900 border-slate-900 text-white'
-                        : 'bg-white border-slate-200 text-slate-900 shadow-xs'
-                    }`}
-                  >
-                    {/* Document attachment card if present */}
-                    {msg.documentAttachment && (
-                      <div className="mb-3 p-2.5 rounded-lg bg-slate-800 text-white border border-slate-700 flex items-center gap-2 text-xs">
-                        <FileText className="w-4 h-4 text-orange-400 shrink-0" />
-                        <div className="truncate flex-1">
-                          <span className="font-semibold block truncate">
-                            {msg.documentAttachment.name}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            {Math.round(msg.documentAttachment.size / 1024)} KB • Attached for analysis
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Content text */}
-                    <div className="selection:bg-orange-200 selection:text-slate-900">
-                      <FormattedResponse content={msg.content} isUser={isUser} />
-                    </div>
-
-                    {/* Proactive J.A.R.V.I.S. Suggestions */}
-                    {msg.proactiveSuggestions && msg.proactiveSuggestions.length > 0 && (
-                      <div className="mt-4 pt-3 border-t border-slate-100">
-                        <div className="text-[11px] font-bold text-amber-700 flex items-center gap-1.5 mb-2">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                          <span>{t.proactiveHeader}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {msg.proactiveSuggestions.map((suggestion, sIdx) => (
-                            <button
-                              key={sIdx}
-                              onClick={() => onSendMessage(suggestion)}
-                              className="text-left text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1.5 group cursor-pointer"
-                            >
-                              <span>{suggestion}</span>
-                              <ArrowRight className="w-3 h-3 text-amber-600 group-hover:translate-x-0.5 transition-transform" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                {/* Assistant Response Body */}
+                <div className="flex-1 min-w-0 space-y-3">
+                  {/* Clean Markdown Response */}
+                  <div className="text-slate-900">
+                    <FormattedResponse content={msg.content} isUser={false} />
                   </div>
 
-                  {/* Message Meta & Action Controls */}
-                  <div className={`flex items-center gap-3 text-[11px] text-slate-500 px-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+                  {/* Proactive Follow-up Chips (Gemini Style) */}
+                  {msg.proactiveSuggestions && msg.proactiveSuggestions.length > 0 && (
+                    <div className="pt-2">
+                      <div className="flex flex-wrap gap-2">
+                        {msg.proactiveSuggestions.map((suggestion, sIdx) => (
+                          <button
+                            key={sIdx}
+                            onClick={() => onSendMessage(suggestion)}
+                            className="text-left text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-slate-900 border border-slate-200/90 px-3 py-1.5 rounded-full transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          >
+                            <Sparkles className="w-3 h-3 text-orange-500 shrink-0" />
+                            <span>{suggestion}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Gemini Action Toolbar at bottom of response */}
+                  <div className="flex items-center gap-2 pt-1 text-slate-400">
+                    {/* Thumbs Up */}
+                    <button
+                      onClick={() => handleFeedback(msg.id, 'up')}
+                      className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer ${
+                        feedback === 'up' ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                      title="Good response"
+                    >
+                      <ThumbsUp className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Thumbs Down */}
+                    <button
+                      onClick={() => handleFeedback(msg.id, 'down')}
+                      className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer ${
+                        feedback === 'down' ? 'text-rose-600 bg-rose-50' : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                      title="Bad response"
+                    >
+                      <ThumbsDown className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Copy */}
+                    <button
+                      onClick={() => handleCopy(msg.id, msg.content)}
+                      className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                      title="Copy to clipboard"
+                    >
+                      {copiedId === msg.id ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
+                    {/* Read Aloud (TTS) */}
+                    <button
+                      onClick={() => handleSpeak(msg.id, msg.content)}
+                      className={`p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer ${
+                        speakingId === msg.id ? 'text-orange-600 bg-orange-50' : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                      title={speakingId === msg.id ? 'Stop audio' : 'Listen with speech'}
+                    >
+                      {speakingId === msg.id ? (
+                        <VolumeX className="w-3.5 h-3.5 text-orange-600" />
+                      ) : (
+                        <Volume2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
+                    {/* Export to PDF */}
+                    <button
+                      onClick={() => exportToPDF(msg)}
+                      className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                      title="Export as PDF"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                    </button>
 
                     {msg.isOffline && (
-                      <span className="flex items-center gap-1 text-amber-600 font-medium">
+                      <span className="flex items-center gap-1 text-[11px] text-amber-600 font-medium ml-2">
                         <WifiOff className="w-3 h-3" />
-                        Local Offline Engine
+                        <span>Offline Kernel</span>
                       </span>
-                    )}
-
-                    {!isUser && (
-                      <div className="flex items-center gap-1.5">
-                        {/* Copy Button */}
-                        <button
-                          onClick={() => handleCopy(msg.id, msg.content)}
-                          className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
-                          title="Copy response to clipboard"
-                        >
-                          {copiedId === msg.id ? (
-                            <span className="flex items-center gap-0.5 text-emerald-600 font-semibold">
-                              <Check className="w-3 h-3" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-
-                        {/* Read Aloud Audio TTS Button */}
-                        <button
-                          onClick={() => handleSpeak(msg.id, msg.content)}
-                          className={`p-1 rounded hover:bg-slate-200 transition-colors cursor-pointer ${
-                            speakingId === msg.id ? 'text-orange-600 bg-orange-100' : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                          title={speakingId === msg.id ? 'Stop audio' : 'Read aloud with voice'}
-                        >
-                          {speakingId === msg.id ? (
-                            <VolumeX className="w-3 h-3" />
-                          ) : (
-                            <Volume2 className="w-3 h-3" />
-                          )}
-                        </button>
-
-                        {/* Export to PDF */}
-                        <button
-                          onClick={() => exportToPDF(msg)}
-                          className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
-                          title="Export report as PDF"
-                        >
-                          <FileText className="w-3 h-3" />
-                        </button>
-                      </div>
                     )}
                   </div>
                 </div>
@@ -447,27 +635,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
           })
         )}
 
-        {/* Loading Indicator */}
+        {/* Loading Indicator (Gemini Sparkle Wave) */}
         {isLoading && (
-          <div className="flex gap-3 mr-auto max-w-lg">
-            <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 text-orange-600 flex items-center justify-center shadow-xs">
-              <Bot className="w-4 h-4 animate-spin" />
+          <div className="flex items-start gap-3.5 sm:gap-4 max-w-3xl mr-auto">
+            <div className="w-7 h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs">
+              <GeminiSparkleIcon className="w-4 h-4 animate-spin" />
             </div>
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-2">
+            <div className="space-y-2 py-1">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
-                <span className="text-xs font-semibold text-slate-800">
-                  Synthesizing domain analysis...
-                </span>
+                <span className="text-xs font-semibold text-slate-700">Thinking...</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>
               </div>
-              <div className="h-1.5 w-36 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 rounded-full animate-pulse w-2/3"></div>
+              <div className="flex gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
               </div>
             </div>
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+        <div id="chat-messages-anchor" className="h-px" />
       </div>
 
       {/* Speech Error Banner if any */}
@@ -477,7 +665,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>{speechError}</span>
           </div>
-          <button onClick={() => setSpeechError(null)} className="text-amber-900 hover:text-black">
+          <button onClick={() => setSpeechError(null)} className="text-amber-900 hover:text-black cursor-pointer">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -501,72 +689,81 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Input Form Bar */}
-      <form onSubmit={handleSend} className="p-3 sm:p-4 bg-white border-t border-slate-200">
-        <div className="flex items-center gap-2">
-          {/* Document Attachment Button */}
-          <button
-            type="button"
-            id="attach-doc-btn"
-            onClick={onOpenDocModal}
-            className="p-2.5 rounded-lg border border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors cursor-pointer"
-            title={t.uploadDoc}
+      {/* Gemini-Style Floating Pill Input Form */}
+      <div className="p-3 sm:p-4 bg-white/95 backdrop-blur-xs border-t border-slate-200/80">
+        <div className="max-w-3xl mx-auto">
+          <form 
+            onSubmit={handleSend}
+            className="flex items-center gap-2 bg-slate-50 border border-slate-300/90 rounded-full px-3 py-1.5 shadow-2xs focus-within:bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all"
           >
-            <Paperclip className="w-4 h-4" />
-          </button>
+            {/* Attachment Button */}
+            <button
+              type="button"
+              id="attach-doc-btn"
+              onClick={onOpenDocModal}
+              className="p-2 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 transition-colors cursor-pointer"
+              title={t.uploadDoc}
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
 
-          {/* Voice Input Microphone Button */}
-          <button
-            type="button"
-            id="voice-input-btn"
-            onClick={handleVoiceToggle}
-            className={`p-2.5 rounded-lg border transition-colors cursor-pointer ${
-              isListening
-                ? 'bg-rose-500 border-rose-600 text-white animate-pulse'
-                : 'border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700'
-            }`}
-            title={isListening ? t.listening : t.voiceInput}
-          >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </button>
+            {/* Input Text Box */}
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                id="chat-input-field"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder={isListening ? t.listening : (t.askPlaceholder || "Ask BharatConnect anything...")}
+                disabled={isLoading}
+                className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 text-sm focus:outline-none py-1.5"
+              />
+              {inputText && !isLoading && (
+                <button
+                  type="button"
+                  id="clear-input-text-btn"
+                  onClick={() => setInputText('')}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-full cursor-pointer"
+                  title="Clear input text"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
-          {/* Text Input */}
-          <div className="flex-1 relative">
-            <input
-              type="text"
-              id="chat-input-field"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder={isListening ? t.listening : t.askPlaceholder}
-              disabled={isLoading}
-              className={`w-full ${inputText ? 'pr-9' : 'pr-3.5'} pl-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 text-sm focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900`}
-            />
-            {inputText && !isLoading && (
-              <button
-                type="button"
-                id="clear-input-text-btn"
-                onClick={() => setInputText('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1 rounded-full cursor-pointer transition-colors"
-                title="Clear input text"
-                aria-label="Clear input text"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+            {/* Voice Input Microphone */}
+            <button
+              type="button"
+              id="voice-input-btn"
+              onClick={handleVoiceToggle}
+              className={`p-2 rounded-full transition-colors cursor-pointer ${
+                isListening
+                  ? 'bg-rose-500 text-white animate-pulse'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/70'
+              }`}
+              title={isListening ? t.listening : t.voiceInput}
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+
+            {/* Send Button (Pill Circle) */}
+            <button
+              type="submit"
+              id="send-message-btn"
+              disabled={(!inputText.trim() && !attachedDoc) || isLoading}
+              className="p-2 rounded-full bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-white transition-colors cursor-pointer shrink-0"
+              title="Send message"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
+
+          {/* Gemini Bottom Disclaimer */}
+          <div className="mt-2 text-center text-[11px] text-slate-400 font-normal">
+            BharatConnect AI may display inaccurate info, so double-check critical clinical, legal, or financial details.
           </div>
-
-          {/* Send Button */}
-          <button
-            type="submit"
-            id="send-message-btn"
-            disabled={(!inputText.trim() && !attachedDoc) || isLoading}
-            className="px-4 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-          >
-            <span>{t.sendBtn}</span>
-            <Send className="w-3.5 h-3.5" />
-          </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 };
